@@ -334,16 +334,62 @@ button { font: inherit; color: inherit; cursor: pointer; border: 0; background: 
   position: absolute;
   left: 0;
   top: 0;
-  padding: 3px 9px;
-  border-radius: 8px;
-  font-size: 11.5px;
-  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 4px 10px 5px;
+  border-radius: 10px;
   color: #3a4656;
-  background: rgba(255, 255, 255, 0.86);
-  box-shadow: 0 3px 10px rgba(31, 60, 90, 0.1);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 3px 10px rgba(31, 60, 90, 0.12);
   white-space: nowrap;
+  pointer-events: auto;
   will-change: transform;
 }
+.house-tag:hover, .house-tag.selected { box-shadow: 0 0 0 2px var(--blue), 0 3px 10px rgba(31, 60, 90, 0.12); }
+.tag-line { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; }
+.tag-dot { width: 8px; height: 8px; border-radius: 50%; background: #b5bcc7; }
+.house-tag[data-status="running"] .tag-dot { background: var(--green); animation: dot-pulse 1.6s ease-in-out infinite; }
+.house-tag[data-status="needsYou"] .tag-dot { background: var(--red); animation: dot-pulse 1s ease-in-out infinite; }
+@keyframes dot-pulse { 50% { box-shadow: 0 0 0 4px var(--pulse, rgba(63, 185, 138, 0.25)); } }
+.house-tag[data-status="needsYou"] .tag-dot { --pulse: rgba(239, 90, 79, 0.3); }
+.tag-stats { font-size: 10.5px; font-weight: 500; color: #7a8696; font-variant-numeric: tabular-nums; }
+.house-tag[data-status="idle"] { opacity: 0.82; }
+
+/* Project card */
+.project-card {
+  position: fixed;
+  left: 20px;
+  bottom: 76px;
+  width: 320px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  animation: alert-in 0.25s ease-out;
+}
+.project-card[hidden] { display: none; }
+.card-head { display: flex; align-items: flex-start; gap: 10px; }
+.card-dot { width: 10px; height: 10px; margin-top: 7px; border-radius: 50%; background: #b5bcc7; flex: none; }
+.project-card[data-status="running"] .card-dot { background: var(--green); }
+.project-card[data-status="needsYou"] .card-dot { background: var(--red); }
+.card-titles { flex: 1; min-width: 0; }
+.card-name { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+.card-path { margin: 2px 0 0; font-size: 11.5px; color: var(--ink-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-close { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; font-size: 16px; color: var(--ink-soft); }
+.card-close:hover { background: var(--glass-strong); }
+.card-status { margin: 8px 0 12px; font-size: 13px; color: var(--ink-soft); }
+.project-card[data-status="running"] .card-status { color: var(--green); }
+.project-card[data-status="needsYou"] .card-status { color: var(--red); }
+.card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0; }
+.card-grid div { padding: 9px 11px; border-radius: 11px; background: var(--glass-strong); }
+.card-grid dt { font-size: 11.5px; color: var(--ink-faint); }
+.card-grid dd { margin: 2px 0 0; font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.card-tokens { margin: 8px 2px 0; font-size: 11.5px; color: var(--ink-faint); line-height: 1.5; }
+.card-level { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 12px; color: var(--ink-soft); }
+.level-name { font-weight: 600; color: var(--ink); }
+.level-bar { flex: 1; height: 6px; border-radius: 3px; background: rgba(127, 140, 160, 0.18); overflow: hidden; }
+.level-bar span { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #7fcfae, #8db7ec); }
+.level-next { font-size: 11.5px; color: var(--ink-faint); }
 
 :root[data-daylight="night"] .bubble:not(.alert) { background: rgba(240, 244, 252, 0.94); }
 
@@ -369,7 +415,10 @@ button { font: inherit; color: inherit; cursor: pointer; border: 0; background: 
   .sessions { left: 16px; right: 16px; bottom: 16px; width: auto; max-height: 45vh; }
   .alerts:not(:empty) ~ .sessions { max-height: 30vh; }
   .bubble-text { max-width: 150px; }
-  .house-tag { padding: 2px 6px; font-size: 10px; }
+  .house-tag { padding: 2px 7px 3px; }
+  .tag-line { font-size: 10.5px; }
+  .tag-stats { display: none; }
+  .project-card { left: 16px; right: 16px; bottom: 76px; width: auto; }
   .tools { left: auto; right: 16px; bottom: auto; top: 64px; flex-direction: column; }
   .alerts:not(:empty) ~ .tools { display: none; }
 }

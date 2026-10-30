@@ -77,6 +77,36 @@ test("ended sessions leave after a while, stale ones are dropped", () => {
   assert.equal(Object.keys(s.projects).length, 1, "projects (buildings) stay");
 });
 
+test("a session moves to the project of the files it writes", () => {
+  const s = createState();
+  const resolve = {
+    projectForCwd: () => ({ id: "c:/home/notes", name: "notes", cwd: "C:/home/notes" }),
+    projectForFile: (f) => (f && f.includes("game") ? { id: "c:/work/game", name: "game", cwd: "C:/work/game" } : null),
+  };
+  applyEvent(s, ev("UserPromptSubmit"), 0, resolve);
+  assert.equal(s.sessions.s1.projectId, "c:/home/notes");
+  applyEvent(s, ev("PreToolUse", { tool_name: "Read", tool_input: { file_path: "C:/work/game/a.lua" } }), 1, resolve);
+  assert.equal(s.sessions.s1.projectId, "c:/home/notes", "reading does not move it");
+  applyEvent(s, ev("PreToolUse", { tool_name: "Edit", tool_input: { file_path: "C:/work/game/a.lua" } }), 2, resolve);
+  assert.equal(s.sessions.s1.projectId, "c:/work/game");
+  applyEvent(s, ev("Stop"), 3, resolve);
+  assert.equal(s.sessions.s1.projectId, "c:/work/game", "and stays there");
+});
+
+test("public projects merge live state with transcript history", () => {
+  const s = createState();
+  applyEvent(s, ev("UserPromptSubmit"), 5000);
+  const history = {
+    [Object.keys(s.projects)[0]]: { name: "demo", cwd: "C:/Users/LOW/Desktop/demo", firstAt: 1000, lastAt: 2000, activeMs: 7200000, prompts: 12, tokens: { input: 1, output: 2, cacheWrite: 3, cacheRead: 4 } },
+    "c:/old/thing": { name: "thing", cwd: "C:/old/thing", firstAt: 10, lastAt: 20, activeMs: 1, prompts: 1, tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 } },
+  };
+  const pub = toPublic(s, 6000, history);
+  assert.equal(pub.projects.length, 2);
+  assert.equal(pub.projects[0].stats.prompts, 12);
+  assert.equal(pub.projects[0].firstSeenAt, 1000, "started when history says");
+  assert.equal(pub.projects[0].lastActiveAt, 5000);
+});
+
 test("events without a session are ignored", () => {
   const s = createState();
   assert.equal(applyEvent(s, { hook_event_name: "Stop" }, 0), false);

@@ -10,14 +10,21 @@ function createState() {
   return { projects: {}, sessions: {} };
 }
 
-function applyEvent(state, payload, now) {
+const WRITE_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
+// Pure default; the server passes the filesystem-aware resolvers from projects.js.
+const DEFAULT_RESOLVE = { projectForCwd: projectFromCwd, projectForFile: () => null };
+
+function applyEvent(state, payload, now, resolve = DEFAULT_RESOLVE) {
   const id = payload && payload.session_id;
   const event = payload && payload.hook_event_name;
   if (!id || !event) return false;
 
-  const project = touchProject(state, payload.cwd, now);
   const session = state.sessions[id] || (state.sessions[id] = newSession(id, now));
-  session.projectId = project.id;
+  // A session belongs to the project of the files it writes; until then, to its cwd.
+  const written = WRITE_TOOLS.has(payload.tool_name) && payload.tool_input && resolve.projectForFile(payload.tool_input.file_path || payload.tool_input.notebook_path);
+  const project = written || (session.projectId ? null : resolve.projectForCwd(payload.cwd));
+  if (project) session.projectId = touchProject(state, project, now).id;
+  else if (state.projects[session.projectId]) state.projects[session.projectId].lastActiveAt = now;
   session.lastEventAt = now;
   if (payload.transcript_path) session.transcriptPath = payload.transcript_path;
   if (payload.session_title) session.title = clip(payload.session_title);
@@ -105,15 +112,29 @@ function prune(state, now) {
   return changed;
 }
 
-function toPublic(state, now) {
+// Merges live projects with transcript history ({ id: { name, cwd, firstAt, lastAt, activeMs, prompts, tokens } }).
+function toPublic(state, now, history = {}) {
   const sessions = Object.values(state.sessions).map((s) => ({ ...s, helpers: Object.values(s.helpers) }));
-  const projects = Object.values(state.projects).sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+  const byId = new Map();
+  for (const [id, h] of Object.entries(history)) {
+    byId.set(id, { id, name: h.name, cwd: h.cwd, firstSeenAt: h.firstAt, lastActiveAt: h.lastAt, stats: statsOf(h) });
+  }
+  for (const p of Object.values(state.projects)) {
+    const merged = byId.get(p.id) || { ...p, stats: statsOf(null) };
+    merged.firstSeenAt = Math.min(merged.firstSeenAt || p.firstSeenAt, p.firstSeenAt);
+    merged.lastActiveAt = Math.max(merged.lastActiveAt || 0, p.lastActiveAt);
+    byId.set(p.id, merged);
+  }
+  const projects = [...byId.values()].sort((a, b) => b.lastActiveAt - a.lastActiveAt);
   return { now, projects, sessions };
 }
 
-function touchProject(state, cwd, now) {
-  const { id, name, cwd: root } = projectFromCwd(cwd);
-  const project = state.projects[id] || (state.projects[id] = { id, name, cwd: root, firstSeenAt: now });
+function statsOf(h) {
+  return h ? { activeMs: h.activeMs, prompts: h.prompts, tokens: h.tokens } : { activeMs: 0, prompts: 0, tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 } };
+}
+
+function touchProject(state, { id, name, cwd }, now) {
+  const project = state.projects[id] || (state.projects[id] = { id, name, cwd, firstSeenAt: now });
   project.lastActiveAt = now;
   return project;
 }

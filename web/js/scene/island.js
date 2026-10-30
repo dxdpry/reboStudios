@@ -46,11 +46,11 @@ export function buildIsland(scene) {
 
   const houses = new Map();
 
-  // Keeps one house per assigned plot; rebuilt only when a plot changes project.
+  // Keeps one house per assigned plot; rebuilt when the plot changes project or the house levels up.
   function syncHouses(plotByProject) {
     for (const [plotIndex, house] of houses) {
       const entry = [...plotByProject.values()].find((p) => p.index === plotIndex);
-      if (!entry || entry.project.id !== house.projectId) {
+      if (!entry || entry.project.id !== house.projectId || tierFor(entry.project) !== house.tier) {
         root.remove(house.group);
         houses.delete(plotIndex);
       }
@@ -58,22 +58,39 @@ export function buildIsland(scene) {
     for (const plot of plotByProject.values()) {
       if (houses.has(plot.index)) continue;
       const h = hash(plot.project.id);
-      const house = buildHouse(pick(COLORS.wall, h), pick(COLORS.roof, h >>> 4));
+      const tier = tierFor(plot.project);
+      const house = buildHouse(pick(COLORS.wall, h), pick(COLORS.roof, h >>> 4), tier);
       place(house.group, plot);
+      house.group.traverse((o) => (o.userData.projectId = plot.project.id));
       root.add(house.group);
-      houses.set(plot.index, { ...house, projectId: plot.project.id });
+      houses.set(plot.index, { ...house, projectId: plot.project.id, tier });
     }
+  }
+
+  function houseObjects() {
+    return [...houses.values()].map((h) => h.group);
   }
 
   function update(t, { night, workshopBusy, litProjects }) {
     workshop.update(t, workshopBusy);
     lighthouse.update(t, night);
-    for (const house of houses.values()) house.setLit(litProjects.has(house.projectId) ? 0.6 + night * 0.9 : night * 0.25);
+    for (const house of houses.values()) {
+      const running = litProjects.has(house.projectId);
+      house.setLit(running ? 0.6 + night * 0.9 : night * 0.25);
+      house.update(t, running);
+    }
     water.material.uniforms.uTime.value = t;
     water.material.uniforms.uNight.value = night;
   }
 
-  return { syncHouses, update, hammockBed: hammock.bed.clone().add(new THREE.Vector3(LANDMARKS.hammock.x, ISLAND.top, LANDMARKS.hammock.z)) };
+  return { syncHouses, houseObjects, update, hammockBed: hammock.bed.clone().add(new THREE.Vector3(LANDMARKS.hammock.x, ISLAND.top, LANDMARKS.hammock.z)) };
+}
+
+// House level from the hours Claude worked on the project (see HOUSE_TIERS in props.js).
+const TIER_HOURS = [1, 5, 20];
+export function tierFor(project) {
+  const hours = ((project.stats && project.stats.activeMs) || 0) / 3600000;
+  return TIER_HOURS.filter((h) => hours >= h).length;
 }
 
 function place(object, { x, z }) {

@@ -21,28 +21,98 @@ function gableRoof(width, height, depth, color) {
   return mesh(geometry, mat(color));
 }
 
-export function buildHouse(wallColor, roofColor) {
+// Project houses grow with the hours Claude spent on the project:
+// 0 = hut, 1 = cottage, 2 = two-storey house, 3 = manor with a side wing and a tower.
+const HOUSE_TIERS = [
+  { w: 1.6, d: 1.5, floorH: 1.1, floors: 1, roofH: 0.9 },
+  { w: 2.2, d: 2, floorH: 1.5, floors: 1, roofH: 1.15 },
+  { w: 2.4, d: 2.1, floorH: 1.2, floors: 2, roofH: 1.2 },
+  { w: 2.6, d: 2.2, floorH: 1.2, floors: 2, roofH: 1.3, wing: true, tower: true },
+];
+
+export function houseHeight(tier) {
+  const t = HOUSE_TIERS[tier];
+  return t.floorH * t.floors + t.roofH + (t.tower ? 1.2 : 0);
+}
+
+export function buildHouse(wallColor, roofColor, tier = 1) {
+  const t = HOUSE_TIERS[Math.max(0, Math.min(HOUSE_TIERS.length - 1, tier))];
   const g = new THREE.Group();
-  const body = box(2.2, 1.5, 2, wallColor);
-  body.position.y = 0.75;
-  const roof = gableRoof(2.7, 1.15, 2.4, roofColor);
-  roof.position.y = 1.5;
-  const door = box(0.55, 0.85, 0.08, COLORS.woodDark);
-  door.position.set(0, 0.43, 1.02);
-  const windowMat = windowMaterial();
-  const windows = [-0.65, 0.65].map((x) => {
-    const w = mesh(new THREE.BoxGeometry(0.42, 0.42, 0.08), windowMat, { shadow: false });
-    w.position.set(x, 0.95, 1.02);
-    return w;
-  });
-  const sideWindow = mesh(new THREE.BoxGeometry(0.08, 0.42, 0.5), windowMat, { shadow: false });
-  sideWindow.position.set(1.12, 0.95, 0);
-  const chimney = box(0.32, 0.7, 0.32, COLORS.stone);
-  chimney.position.set(0.55, 2.2, -0.5);
+  const bodyH = t.floorH * t.floors;
+  const body = box(t.w, bodyH, t.d, wallColor);
+  body.position.y = bodyH / 2;
+  const roof = gableRoof(t.w + 0.5, t.roofH, t.d + 0.4, roofColor);
+  roof.position.y = bodyH;
+  const door = box(0.5, 0.8, 0.08, COLORS.woodDark);
+  door.position.set(0, 0.4, t.d / 2 + 0.02);
   const step = box(0.9, 0.12, 0.4, COLORS.stone);
-  step.position.set(0, 0.06, 1.2);
-  g.add(body, roof, door, ...windows, sideWindow, chimney, step);
-  return { group: g, setLit: (amount) => (windowMat.emissiveIntensity = amount) };
+  step.position.set(0, 0.06, t.d / 2 + 0.2);
+  g.add(body, roof, door, step);
+
+  const windowMat = windowMaterial();
+  const addWindow = (x, y, z, sideways) => {
+    const w = mesh(sideways ? new THREE.BoxGeometry(0.08, 0.38, 0.46) : new THREE.BoxGeometry(0.38, 0.38, 0.08), windowMat, { shadow: false });
+    w.position.set(x, y, z);
+    g.add(w);
+  };
+  const columns = t.w > 2 ? [-0.7, 0.7] : [-0.5, 0.5];
+  for (let floor = 0; floor < t.floors; floor++) {
+    const y = floor * t.floorH + t.floorH * 0.62;
+    for (const x of columns) if (floor > 0 || Math.abs(x) > 0.4) addWindow(x, y, t.d / 2 + 0.02);
+    addWindow(t.w / 2 + 0.02, y, 0, true);
+  }
+  if (t.floors > 1) {
+    const ledge = box(t.w + 0.12, 0.1, t.d + 0.12, COLORS.white);
+    ledge.position.y = t.floorH;
+    g.add(ledge);
+  }
+
+  const chimney = box(0.32, 0.8, 0.32, COLORS.stone);
+  chimney.position.set(t.w * 0.25, bodyH + t.roofH * 0.6, -t.d * 0.2);
+  g.add(chimney);
+  const chimneyTop = new THREE.Vector3(chimney.position.x, chimney.position.y + 0.45, chimney.position.z);
+
+  if (t.wing) {
+    const wing = box(1.4, t.floorH, 1.6, wallColor);
+    wing.position.set(-t.w / 2 - 0.65, t.floorH / 2, -0.2);
+    const wingRoof = gableRoof(1.8, 0.8, 1.9, roofColor);
+    wingRoof.rotation.y = Math.PI / 2;
+    wingRoof.position.set(-t.w / 2 - 0.65, t.floorH, -0.2);
+    g.add(wing, wingRoof);
+    addWindow(-t.w / 2 - 0.65, t.floorH * 0.6, 0.62);
+  }
+  if (t.tower) {
+    const towerH = bodyH + 1.2;
+    const tower = cylinder(0.45, 0.5, towerH, wallColor, 8);
+    tower.position.set(t.w / 2 - 0.1, towerH / 2, t.d / 2 - 0.1);
+    const cap = mesh(new THREE.ConeGeometry(0.62, 0.9, 8), mat(roofColor));
+    cap.position.set(t.w / 2 - 0.1, towerH + 0.45, t.d / 2 - 0.1);
+    const pole = cylinder(0.02, 0.02, 0.5, COLORS.woodDark, 4);
+    pole.position.set(t.w / 2 - 0.1, towerH + 1.1, t.d / 2 - 0.1);
+    const pennant = box(0.32, 0.18, 0.02, roofColor);
+    pennant.position.set(t.w / 2 + 0.07, towerH + 1.25, t.d / 2 - 0.1);
+    g.add(tower, cap, pole, pennant);
+  }
+
+  // Chimney smoke while a session is working in the project.
+  const smoke = [];
+  for (let i = 0; i < 3; i++) {
+    const puff = sphere(0.18, "#ffffff", 1, { transparent: true, opacity: 0 });
+    puff.material = puff.material.clone(); // each puff fades on its own
+    puff.castShadow = false;
+    g.add(puff);
+    smoke.push(puff);
+  }
+  function update(time, running) {
+    smoke.forEach((puff, i) => {
+      const phase = (time * 0.5 + i / smoke.length) % 1;
+      puff.visible = running;
+      puff.position.set(chimneyTop.x + Math.sin(phase * 4 + i) * 0.12, chimneyTop.y + phase * 1.6, chimneyTop.z);
+      puff.scale.setScalar(0.6 + phase * 1.2);
+      puff.material.opacity = 0.8 * (1 - phase);
+    });
+  }
+  return { group: g, setLit: (amount) => (windowMat.emissiveIntensity = amount), update };
 }
 
 export function buildLibrary() {
@@ -102,6 +172,7 @@ export function buildWorkshop() {
   const smoke = [];
   for (let i = 0; i < 4; i++) {
     const puff = sphere(0.28, "#ffffff", 1, { transparent: true, opacity: 0.85 });
+    puff.material = puff.material.clone(); // each puff fades on its own
     puff.castShadow = false;
     g.add(puff);
     smoke.push(puff);

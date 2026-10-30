@@ -2,16 +2,20 @@
 // Text from hooks (commands, file names) is always set with textContent.
 import * as THREE from "three";
 import { iconForEntity } from "./icons.js";
+import { hours, compact, freshTokens } from "./format.js";
+import { houseHeight } from "../scene/props.js";
+import { tierFor } from "../scene/island.js";
 
 const HEAD_OFFSET = 1.45; // above the head, in colonist units (scaled with the model)
-const TAG_OFFSET = new THREE.Vector3(0, 0.15, 1.6);
+const TAG_GAP = 0.5; // world units between the roof and the tag
+const STATUS_TEXT = { running: "Running", needsYou: "Needs you", idle: "Idle" };
 
-export function createOverlay(layer, camera, canvas, onSelect) {
+export function createOverlay(layer, camera, canvas, onSelect, onSelectProject) {
   const bubbles = new Map();
   const tags = new Map();
   const v = new THREE.Vector3();
 
-  function project(world) {
+  function projectToScreen(world) {
     v.copy(world).project(camera);
     return { x: (v.x * 0.5 + 0.5) * canvas.clientWidth, y: (-v.y * 0.5 + 0.5) * canvas.clientHeight, visible: v.z < 1 };
   }
@@ -31,15 +35,19 @@ export function createOverlay(layer, camera, canvas, onSelect) {
 
   function tagFor(projectId) {
     if (!tags.has(projectId)) {
-      const el = document.createElement("div");
+      const el = document.createElement("button");
+      el.type = "button";
       el.className = "house-tag";
+      el.innerHTML = '<span class="tag-line"><span class="tag-dot"></span><span class="tag-name"></span></span><span class="tag-stats"></span>';
+      el.addEventListener("click", () => onSelectProject(projectId));
       layer.appendChild(el);
-      tags.set(projectId, el);
+      tags.set(projectId, { el, name: el.querySelector(".tag-name"), stats: el.querySelector(".tag-stats"), key: "" });
     }
     return tags.get(projectId);
   }
 
-  function update(entities, plots, selectedId) {
+  // projectStatus: Map projectId -> "running" | "needsYou" (missing = idle).
+  function update(entities, plots, selectedId, projectStatus, selectedProjectId) {
     const seen = new Set();
     for (const e of entities) {
       if (e.place === "boat") continue;
@@ -65,7 +73,7 @@ export function createOverlay(layer, camera, canvas, onSelect) {
       b.el.classList.toggle("walking", e.walking);
       const head = e.model.root.position.clone();
       head.y += HEAD_OFFSET * e.model.root.scale.y + (e.pose === "resting" && e.slot === 0 ? -0.6 : 0);
-      const p = project(head);
+      const p = projectToScreen(head);
       b.el.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, -100%)`;
       b.el.style.zIndex = String(needsYou ? 3000 : Math.round(p.y));
       b.el.hidden = !p.visible;
@@ -79,15 +87,28 @@ export function createOverlay(layer, camera, canvas, onSelect) {
 
     const seenTags = new Set();
     for (const plot of plots) {
-      const el = tagFor(plot.project.id);
-      seenTags.add(plot.project.id);
-      if (el.textContent !== plot.project.name) el.textContent = plot.project.name;
-      const p = project(new THREE.Vector3(plot.x, 1.1, plot.z).add(TAG_OFFSET));
-      el.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, 0)`;
+      const project = plot.project;
+      const tag = tagFor(project.id);
+      seenTags.add(project.id);
+      const status = projectStatus.get(project.id) || "idle";
+      const stats = project.stats || {};
+      const statsText = `${hours(stats.activeMs || 0)} · ${compact(freshTokens(stats.tokens))} tokens`;
+      const key = `${project.name}|${status}|${statsText}`;
+      if (tag.key !== key) {
+        tag.name.textContent = project.name;
+        tag.stats.textContent = statsText;
+        tag.el.dataset.status = status;
+        tag.el.title = `${project.name}: ${STATUS_TEXT[status]}`;
+        tag.key = key;
+      }
+      tag.el.classList.toggle("selected", project.id === selectedProjectId);
+      const top = new THREE.Vector3(plot.x, 1.1 + houseHeight(tierFor(project)) + TAG_GAP, plot.z);
+      const p = projectToScreen(top);
+      tag.el.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, -100%)`;
     }
-    for (const [id, el] of tags) {
+    for (const [id, tag] of tags) {
       if (seenTags.has(id)) continue;
-      el.remove();
+      tag.el.remove();
       tags.delete(id);
     }
   }

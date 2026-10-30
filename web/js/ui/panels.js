@@ -1,6 +1,7 @@
 // Glass panels around the island: status counters, "Needs you" alert cards and the session list.
 // All hook-derived text goes through textContent.
 import { ICONS } from "./icons.js";
+import { ago } from "./format.js";
 
 const STATUS_LABEL = { needsYou: "Needs you", working: "Working", thinking: "Thinking", done: "Done", idle: "Idle" };
 const STATUS_ORDER = { needsYou: 0, working: 1, thinking: 2, idle: 3, done: 4 };
@@ -124,13 +125,4 @@ function el(tag, className, text) {
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
-}
-
-export function ago(ms) {
-  const sec = Math.max(0, Math.floor(ms / 1000));
-  if (sec < 60) return `${sec}s`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min} min`;
-  const h = Math.floor(min / 60);
-  return `${h} h ${min % 60} min`;
 }
