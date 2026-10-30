@@ -119,7 +119,10 @@ function toPublic(state, now, history = {}) {
   for (const [id, h] of Object.entries(history)) {
     byId.set(id, { id, name: h.name, cwd: h.cwd, firstSeenAt: h.firstAt, lastActiveAt: h.lastAt, stats: statsOf(h) });
   }
+  const inUse = new Set(sessions.map((s) => s.projectId));
   for (const p of Object.values(state.projects)) {
+    // A project only seen live (no transcript history yet) disappears once nobody is on it.
+    if (!byId.has(p.id) && !inUse.has(p.id)) continue;
     const merged = byId.get(p.id) || { ...p, stats: statsOf(null) };
     merged.firstSeenAt = Math.min(merged.firstSeenAt || p.firstSeenAt, p.firstSeenAt);
     merged.lastActiveAt = Math.max(merged.lastActiveAt || 0, p.lastActiveAt);

@@ -1,23 +1,23 @@
-// HTML elements pinned to 3D positions: activity bubbles over colonists and name tags under houses.
+// HTML elements pinned to 3D positions: activity bubbles over people and a plaque beside each floor.
 // Text from hooks (commands, file names) is always set with textContent.
 import * as THREE from "three";
 import { iconForEntity } from "./icons.js";
 import { hours, compact, freshTokens } from "./format.js";
-import { houseHeight } from "../scene/props.js";
-import { tierFor } from "../scene/island.js";
+import { TOWER, floorBaseY } from "../scene/towerLayout.js";
 
-const HEAD_OFFSET = 1.45; // above the head, in colonist units (scaled with the model)
-const TAG_GAP = 0.5; // world units between the roof and the tag
+const HEAD_OFFSET = 1.45; // above the head, in person units (scaled with the model)
 const STATUS_TEXT = { running: "Running", needsYou: "Needs you", idle: "Idle" };
 
 export function createOverlay(layer, camera, canvas, onSelect, onSelectProject) {
   const bubbles = new Map();
-  const tags = new Map();
+  const plaques = new Map();
   const v = new THREE.Vector3();
 
-  function projectToScreen(world) {
+  function toScreen(world) {
     v.copy(world).project(camera);
-    return { x: (v.x * 0.5 + 0.5) * canvas.clientWidth, y: (-v.y * 0.5 + 0.5) * canvas.clientHeight, visible: v.z < 1 };
+    const x = (v.x * 0.5 + 0.5) * canvas.clientWidth;
+    const y = (-v.y * 0.5 + 0.5) * canvas.clientHeight;
+    return { x, y, visible: v.z < 1 && y > -60 && y < canvas.clientHeight + 60 };
   }
 
   function bubbleFor(key) {
@@ -33,31 +33,29 @@ export function createOverlay(layer, camera, canvas, onSelect, onSelectProject) 
     return bubbles.get(key);
   }
 
-  function tagFor(projectId) {
-    if (!tags.has(projectId)) {
+  function plaqueFor(projectId) {
+    if (!plaques.has(projectId)) {
       const el = document.createElement("button");
       el.type = "button";
-      el.className = "house-tag";
-      el.innerHTML = '<span class="tag-line"><span class="tag-dot"></span><span class="tag-name"></span></span><span class="tag-stats"></span>';
+      el.className = "plaque";
+      el.innerHTML = '<span class="tag-line"><span class="tag-dot"></span><span class="plaque-floor"></span><span class="tag-name"></span></span><span class="tag-stats"></span>';
       el.addEventListener("click", () => onSelectProject(projectId));
       layer.appendChild(el);
-      tags.set(projectId, { el, name: el.querySelector(".tag-name"), stats: el.querySelector(".tag-stats"), key: "" });
+      plaques.set(projectId, { el, floor: el.querySelector(".plaque-floor"), name: el.querySelector(".tag-name"), stats: el.querySelector(".tag-stats"), key: "" });
     }
-    return tags.get(projectId);
+    return plaques.get(projectId);
   }
 
-  // projectStatus: Map projectId -> "running" | "needsYou" (missing = idle).
-  function update(entities, plots, selectedId, projectStatus, selectedProjectId) {
+  // floors: [{ project, index }]; projectStatus: Map projectId -> "running" | "needsYou".
+  function update(entities, floors, selectedId, projectStatus, selectedProjectId) {
     const seen = new Set();
     for (const e of entities) {
-      if (e.place === "boat") continue;
       const b = bubbleFor(e.key);
       seen.add(e.key);
       const s = e.session;
       const needsYou = !e.helper && s.status === "needsYou";
       const selected = !e.helper && s.id === selectedId;
-      const showText = needsYou || selected;
-      const text = showText ? (needsYou && s.needsYou?.detail) || s.activity : "";
+      const text = needsYou || selected ? (needsYou && s.needsYou?.detail) || s.activity : "";
       const icon = iconForEntity(e);
       if (b.icon !== icon) {
         b.el.firstChild.innerHTML = icon;
@@ -70,10 +68,10 @@ export function createOverlay(layer, camera, canvas, onSelect, onSelectProject) 
       b.el.classList.toggle("alert", needsYou);
       b.el.classList.toggle("selected", selected);
       b.el.classList.toggle("small", !!e.helper);
-      b.el.classList.toggle("walking", e.walking);
+      b.el.classList.toggle("walking", e.walking || !e.model.root.visible);
       const head = e.model.root.position.clone();
-      head.y += HEAD_OFFSET * e.model.root.scale.y + (e.pose === "resting" && e.slot === 0 ? -0.6 : 0);
-      const p = projectToScreen(head);
+      head.y += HEAD_OFFSET * e.model.root.scale.y + e.model.body.position.y;
+      const p = toScreen(head);
       b.el.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, -100%)`;
       b.el.style.zIndex = String(needsYou ? 3000 : Math.round(p.y));
       b.el.hidden = !p.visible;
@@ -85,31 +83,33 @@ export function createOverlay(layer, camera, canvas, onSelect, onSelectProject) 
       bubbles.delete(key);
     }
 
-    const seenTags = new Set();
-    for (const plot of plots) {
-      const project = plot.project;
-      const tag = tagFor(project.id);
-      seenTags.add(project.id);
+    const seenPlaques = new Set();
+    for (const { project, index } of floors) {
+      const plaque = plaqueFor(project.id);
+      seenPlaques.add(project.id);
       const status = projectStatus.get(project.id) || "idle";
       const stats = project.stats || {};
       const statsText = `${hours(stats.activeMs || 0)} · ${compact(freshTokens(stats.tokens))} tokens`;
-      const key = `${project.name}|${status}|${statsText}`;
-      if (tag.key !== key) {
-        tag.name.textContent = project.name;
-        tag.stats.textContent = statsText;
-        tag.el.dataset.status = status;
-        tag.el.title = `${project.name}: ${STATUS_TEXT[status]}`;
-        tag.key = key;
+      const key = `${index}|${project.name}|${status}|${statsText}`;
+      if (plaque.key !== key) {
+        plaque.floor.textContent = String(index);
+        plaque.name.textContent = project.name;
+        plaque.stats.textContent = statsText;
+        plaque.el.dataset.status = status;
+        plaque.el.title = `Floor ${index} · ${project.name}: ${STATUS_TEXT[status]}`;
+        plaque.key = key;
       }
-      tag.el.classList.toggle("selected", project.id === selectedProjectId);
-      const top = new THREE.Vector3(plot.x, 1.1 + houseHeight(tierFor(project)) + TAG_GAP, plot.z);
-      const p = projectToScreen(top);
-      tag.el.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, -100%)`;
+      plaque.el.classList.toggle("selected", project.id === selectedProjectId);
+      // On the glass, top-left of the floor, so side panels never cover it.
+      const corner = new THREE.Vector3(-TOWER.w / 2 + 0.6, floorBaseY(index) + TOWER.floorH - 0.25, TOWER.d / 2);
+      const p = toScreen(corner);
+      plaque.el.hidden = !p.visible;
+      plaque.el.style.transform = `translate(${p.x}px, ${p.y}px)`;
     }
-    for (const [id, tag] of tags) {
-      if (seenTags.has(id)) continue;
-      tag.el.remove();
-      tags.delete(id);
+    for (const [id, plaque] of plaques) {
+      if (seenPlaques.has(id)) continue;
+      plaque.el.remove();
+      plaques.delete(id);
     }
   }
 

@@ -19,9 +19,11 @@ function normalize(file) {
   return String(file || "").replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
+// Relative paths can't be placed (they depend on a cwd we may not know), so they never move a session.
 function isIgnored(file) {
   const lower = normalize(file).toLowerCase();
-  return !lower || IGNORED_PREFIXES.some((p) => lower.startsWith(p));
+  const absolute = /^[a-z]:\//.test(lower) || lower.startsWith("/");
+  return !absolute || IGNORED_PREFIXES.some((p) => lower.startsWith(p));
 }
 
 function hasMarker(dir) {

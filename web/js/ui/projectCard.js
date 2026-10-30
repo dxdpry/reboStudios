@@ -1,10 +1,9 @@
 // Glass card with a project's history: when it started, time Claude worked on it, prompts, tokens.
 import { ICONS } from "./icons.js";
 import { ago, hours, compact, freshTokens, date } from "./format.js";
-import { tierFor } from "../scene/island.js";
+import { tierFor, TIER_NAMES, TIER_HOURS } from "../scene/tiers.js";
 
-const TIER_NAMES = ["Hut", "Cottage", "House", "Manor"];
-const NEXT_TIER_HOURS = [1, 5, 20];
+const NEXT_TIER_HOURS = TIER_HOURS;
 
 export function createProjectCard(root, onClose) {
   root.innerHTML = `

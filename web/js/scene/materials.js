@@ -39,16 +39,32 @@ export function mesh(geometry, material, { shadow = true, receive = true } = {})
   return m;
 }
 
+// Geometries are shared by size: a tower of 50 floors repeats the same desks and chairs.
+const geometryCache = new Map();
+function geometry(key, create) {
+  if (!geometryCache.has(key)) geometryCache.set(key, create());
+  return geometryCache.get(key);
+}
+
 export function box(w, h, d, color, extra) {
-  return mesh(new THREE.BoxGeometry(w, h, d), mat(color, extra));
+  return mesh(geometry(`b${w},${h},${d}`, () => new THREE.BoxGeometry(w, h, d)), mat(color, extra));
 }
 
 export function cylinder(rTop, rBottom, h, color, segments = 10, extra) {
-  return mesh(new THREE.CylinderGeometry(rTop, rBottom, h, segments), mat(color, extra));
+  return mesh(geometry(`c${rTop},${rBottom},${h},${segments}`, () => new THREE.CylinderGeometry(rTop, rBottom, h, segments)), mat(color, extra));
 }
 
 export function sphere(r, color, detail = 1, extra) {
-  return mesh(new THREE.IcosahedronGeometry(r, detail), mat(color, extra));
+  return mesh(geometry(`s${r},${detail}`, () => new THREE.IcosahedronGeometry(r, detail)), mat(color, extra));
+}
+
+// Interior props: no shadows (keeps a tall tower cheap to render).
+export function flat(object) {
+  object.traverse((o) => {
+    o.castShadow = false;
+    o.receiveShadow = false;
+  });
+  return object;
 }
 
 // Flat slab with rounded corners (island layers, paths), top face at y = height.

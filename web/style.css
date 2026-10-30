@@ -1,7 +1,7 @@
 :root {
   --night: 0;
-  --sky-top: #bfe6fb;
-  --sky-bottom: #e9f7fd;
+  --sky-top: #a9cdf0;
+  --sky-bottom: #f6d3bd;
   --ink: #1f2a37;
   --ink-soft: #5b6878;
   --ink-faint: #8a96a6;
@@ -357,11 +357,112 @@ button { font: inherit; color: inherit; cursor: pointer; border: 0; background: 
 .tag-stats { font-size: 10.5px; font-weight: 500; color: #7a8696; font-variant-numeric: tabular-nums; }
 .house-tag[data-status="idle"] { opacity: 0.82; }
 
+/* Floor plaques beside the tower */
+.plaque {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 5px 11px 6px;
+  border-radius: 11px;
+  color: #3a4656;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 4px 14px rgba(31, 60, 90, 0.12);
+  backdrop-filter: blur(8px);
+  white-space: nowrap;
+  pointer-events: auto;
+  will-change: transform;
+}
+.plaque:hover, .plaque.selected { box-shadow: 0 0 0 2px var(--blue), 0 4px 14px rgba(31, 60, 90, 0.12); }
+.plaque[data-status="idle"] { opacity: 0.8; }
+.plaque-floor {
+  min-width: 18px;
+  padding: 0 4px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  text-align: center;
+  color: var(--ink-soft);
+  background: rgba(127, 140, 160, 0.14);
+}
+.plaque .tag-line { font-size: 12.5px; }
+
+/* Floor directory */
+.directory {
+  position: fixed;
+  top: 60px;
+  left: 20px;
+  width: 260px;
+  max-height: calc(100vh - 140px);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.directory.collapsed .panel-body { display: none; }
+.directory.collapsed .panel-chevron { transform: rotate(-90deg); }
+.dir-body { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.dir-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: var(--glass-strong);
+  color: var(--ink-faint);
+}
+.dir-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font: inherit; font-size: 13px; color: var(--ink); }
+.dir-jumps { display: flex; gap: 6px; }
+.dir-jump {
+  flex: 1;
+  padding: 6px 8px;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--glass-strong);
+}
+.dir-jump.needsYou:not(:disabled) { background: var(--red); color: #fff; }
+.dir-jump.running:not(:disabled) { background: var(--green-soft); color: var(--green); }
+.dir-jump:disabled { opacity: 0.5; cursor: default; }
+.dir-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
+.dir-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 9px;
+  text-align: left;
+  font-size: 13px;
+}
+.dir-row:hover { background: var(--glass-strong); }
+.dir-row.selected { background: var(--glass-strong); box-shadow: inset 0 0 0 2px var(--blue); }
+.dir-floor { min-width: 22px; font-size: 11px; font-weight: 600; color: var(--ink-faint); text-align: right; font-variant-numeric: tabular-nums; }
+.dir-name { flex: 1; min-width: 0; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dir-hours { font-size: 11.5px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.dir-row[data-status="running"] .tag-dot { background: var(--green); }
+.dir-row[data-status="needsYou"] .tag-dot { background: var(--red); }
+.dir-archive summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+  list-style: none;
+}
+.dir-archive summary::-webkit-details-marker { display: none; }
+.dir-archive[hidden] { display: none; }
+
 /* Project card */
 .project-card {
   position: fixed;
-  left: 20px;
-  bottom: 76px;
+  left: 300px;
+  bottom: 20px;
   width: 320px;
   padding: 14px 16px;
   border-radius: var(--radius);
@@ -419,6 +520,10 @@ button { font: inherit; color: inherit; cursor: pointer; border: 0; background: 
   .tag-line { font-size: 10.5px; }
   .tag-stats { display: none; }
   .project-card { left: 16px; right: 16px; bottom: 76px; width: auto; }
+  .directory { top: auto; bottom: 76px; left: 16px; right: 16px; width: auto; max-height: 50vh; }
+  .directory:not(.collapsed) ~ .project-card { display: none; }
+  .plaque .tag-stats { display: none; }
+  .plaque { padding: 3px 8px 4px; }
   .tools { left: auto; right: 16px; bottom: auto; top: 64px; flex-direction: column; }
   .alerts:not(:empty) ~ .tools { display: none; }
 }

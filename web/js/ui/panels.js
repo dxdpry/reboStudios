@@ -82,7 +82,7 @@ export function createPanels({ counts, alerts, sessions, sessionsBody, sessionsT
   function renderSessions(list, projectName, now, selectedId) {
     sessions.querySelector(".panel-count").textContent = String(list.length);
     if (!list.length) {
-      sessionsBody.replaceChildren(el("p", "empty", "Nobody on the island yet. Start a Claude Code session and a colonist will sail in."));
+      sessionsBody.replaceChildren(el("p", "empty", "Nobody at work yet. Start a Claude Code session and someone will take the elevator up."));
       return;
     }
     const byProject = new Map();

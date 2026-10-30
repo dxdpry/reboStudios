@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Agent Island</title>
+  <title>Rebo Studios</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
@@ -18,23 +18,25 @@
 
   <div class="brand">
     <span class="brand-mark"></span>
-    <span class="brand-name">Agent Island</span>
+    <span class="brand-name">Rebo Studios</span>
     <span class="conn" id="conn" title="Connection to the local server"></span>
   </div>
 
-  <nav class="counts glass" id="counts" aria-label="Colonist status"></nav>
+  <nav class="counts glass" id="counts" aria-label="Session status"></nav>
 
   <section class="alerts" id="alerts" aria-live="polite"></section>
 
   <aside class="sessions glass" id="sessions">
     <button class="panel-head" id="sessions-toggle" type="button">
       <span class="panel-icon"></span>
-      <span class="panel-title">Colonists</span>
+      <span class="panel-title">Sessions</span>
       <span class="panel-count">0</span>
       <span class="panel-chevron"></span>
     </button>
     <div class="panel-body" id="sessions-body"></div>
   </aside>
+
+  <aside class="directory glass" id="directory"></aside>
 
   <section class="project-card glass" id="project-card" hidden></section>
 

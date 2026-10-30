@@ -1,27 +1,27 @@
 // Entry point: connects to the server stream, keeps the latest state and runs the render loop.
 import * as THREE from "three";
 import { createStage } from "./scene/stage.js";
-import { buildIsland } from "./scene/island.js";
+import { createTower } from "./scene/tower.js";
 import { createPeople } from "./scene/people.js";
-import { PLOTS } from "./scene/layout.js";
+import { TOWER, ARCHIVE_BELOW_MS, floorBaseY, deskCount } from "./scene/towerLayout.js";
 import { COLORS, hash, pick } from "./scene/materials.js";
 import { createOverlay } from "./ui/overlay.js";
 import { createPanels } from "./ui/panels.js";
 import { createProjectCard } from "./ui/projectCard.js";
+import { createDirectory } from "./ui/directory.js";
 import { ICONS } from "./ui/icons.js";
 import { createAlerts } from "./notify.js";
 import { nightAmount } from "./daylight.js";
 
-const PLOTS_KEY = "agentIsland.plots";
 // ?hour=22 previews another time of day (for checking the night look).
 const HOUR_OVERRIDE = Number(new URLSearchParams(location.search).get("hour"));
 
-const stageEl = document.getElementById("stage");
-const stage = createStage(stageEl);
-const island = buildIsland(stage.scene);
-const people = createPeople(stage.scene, island.hammockBed);
-const overlay = createOverlay(document.getElementById("overlay"), stage.camera, stage.renderer.domElement, (id) => select(id, false), (id) => selectProject(id));
-const card = createProjectCard(document.getElementById("project-card"), () => selectProject(null));
+const stage = createStage(document.getElementById("stage"));
+const tower = createTower(stage.scene);
+const people = createPeople(stage.scene);
+const overlay = createOverlay(document.getElementById("overlay"), stage.camera, stage.renderer.domElement, (id) => select(id, false), (id) => pickProject(id));
+const card = createProjectCard(document.getElementById("project-card"), () => pickProject(null));
+const directory = createDirectory(document.getElementById("directory"), { onPick: (id) => pickProject(id, true) });
 const panels = createPanels({
   counts: document.getElementById("counts"),
   alerts: document.getElementById("alerts"),
@@ -32,18 +32,20 @@ const panels = createPanels({
   colorOf: (projectId) => pick(COLORS.roof, hash(projectId) >>> 4),
 });
 const alerts = createAlerts(document.getElementById("alerts-toggle"));
-window.agentIsland = { stage }; // for inspecting the scene from the devtools console
+window.agentTower = { stage }; // for inspecting the scene from the devtools console
 
 const recenter = document.getElementById("recenter");
 recenter.innerHTML = ICONS.target;
-recenter.addEventListener("click", () => stage.focusOn(null));
+recenter.title = "Go to the top floor";
+recenter.addEventListener("click", () => stage.focusOnY(floorMid(tower.count)));
 
 let state = { now: Date.now(), projects: [], sessions: [] };
 let clockOffset = 0;
 let selectedId = null;
 let selectedProjectId = null;
-let plotByProject = new Map();
-const plotIndex = loadPlots();
+let floors = []; // [{ project, index }] bottom to top
+let archived = [];
+let firstState = true;
 
 connect();
 
@@ -55,13 +57,40 @@ function connect() {
   source.onmessage = (msg) => {
     state = JSON.parse(msg.data);
     clockOffset = state.now - Date.now();
-    plotByProject = assignPlots(state);
-    island.syncHouses(plotByProject);
-    people.sync(state, (id) => plotByProject.get(id));
+    layoutFloors();
+    people.sync(state, (id) => tower.floorIndexOf(id), tower.roofIndex(), (id) => deskCount(projectById(id)));
     alerts.update(state);
     if (selectedId && !state.sessions.some((s) => s.id === selectedId)) selectedId = null;
-    panels.render(state, serverNow(), selectedId);
+    if (firstState) {
+      firstState = false;
+      stage.focusOnY(floorMid(highestBusyFloor() || tower.count));
+    }
+    renderPanels();
   };
+}
+
+// Every project with real work (or someone on it now) gets a floor, oldest at the bottom.
+function layoutFloors() {
+  const live = new Set(state.sessions.filter((s) => s.status !== "ended").map((s) => s.projectId));
+  const byAge = [...state.projects].sort((a, b) => (a.firstSeenAt || 0) - (b.firstSeenAt || 0));
+  const withFloor = byAge.filter((p) => live.has(p.id) || (p.stats?.activeMs || 0) >= ARCHIVE_BELOW_MS);
+  archived = byAge.filter((p) => !withFloor.includes(p)).reverse();
+  tower.sync(withFloor);
+  floors = withFloor.map((project, i) => ({ project, index: i + 1 }));
+  stage.setScrollRange(2, floorBaseY(tower.count + 1) + 2);
+}
+
+function projectById(id) {
+  return state.projects.find((p) => p.id === id);
+}
+
+function floorMid(index) {
+  return floorBaseY(index) + TOWER.floorH / 2;
+}
+
+function highestBusyFloor() {
+  const status = projectStatuses();
+  return floors.filter((f) => status.has(f.project.id)).reduce((max, f) => Math.max(max, f.index), 0);
 }
 
 function serverNow() {
@@ -71,75 +100,22 @@ function serverNow() {
 function select(id, focus) {
   selectedId = selectedId === id && !focus ? null : id;
   const entity = selectedId && people.get(selectedId);
-  if (focus && entity) stage.focusOn(entity.model.root.position.clone().setY(0.8));
-  panels.render(state, serverNow(), selectedId);
+  if (focus && entity) stage.focusOnY(entity.model.root.position.y + 1);
+  renderPanels();
 }
 
-// A project keeps its plot once it has one, so houses never move. New projects take a free plot;
-// when the island is full, a project with live sessions evicts the least recently active idle one.
-function assignPlots(s) {
-  const live = new Set(s.sessions.map((x) => x.projectId));
-  const byId = new Map(s.projects.map((p) => [p.id, p]));
-  // The island shows the projects with live sessions first, then the most recently active ones.
-  const wanted = [...s.projects]
-    .sort((a, b) => live.has(b.id) - live.has(a.id) || b.lastActiveAt - a.lastActiveAt)
-    .slice(0, PLOTS.length);
-  const wantedIds = new Set(wanted.map((p) => p.id));
-  for (const id of plotIndex.keys()) if (!wantedIds.has(id)) plotIndex.delete(id);
-  for (const p of wanted) {
-    if (plotIndex.has(p.id)) continue;
-    const used = new Set(plotIndex.values());
-    plotIndex.set(p.id, PLOTS.findIndex((_, i) => !used.has(i)));
-  }
-  savePlots();
-
-  const map = new Map();
-  for (const [id, index] of plotIndex) map.set(id, { ...PLOTS[index], index, project: byId.get(id) });
-  return map;
+function pickProject(id, focus) {
+  selectedProjectId = selectedProjectId === id && !focus ? null : id;
+  const index = selectedProjectId ? tower.floorIndexOf(selectedProjectId) : 0;
+  if (focus && index) stage.focusOnY(floorMid(index));
+  renderPanels();
 }
 
-function loadPlots() {
-  try {
-    return new Map(JSON.parse(localStorage.getItem(PLOTS_KEY)) || []);
-  } catch {
-    return new Map();
-  }
-}
-
-function savePlots() {
-  try {
-    localStorage.setItem(PLOTS_KEY, JSON.stringify([...plotIndex]));
-  } catch {
-    // Storage blocked: plots are reassigned on reload.
-  }
-}
-
-// Clicking a colonist selects it; clicking empty ground clears the selection.
-const raycaster = new THREE.Raycaster();
-const pointer = new THREE.Vector2();
-let downAt = null;
-stage.renderer.domElement.addEventListener("pointerdown", (ev) => (downAt = { x: ev.clientX, y: ev.clientY }));
-stage.renderer.domElement.addEventListener("pointerup", (ev) => {
-  if (!downAt || Math.hypot(ev.clientX - downAt.x, ev.clientY - downAt.y) > 5) return;
-  const rect = stage.renderer.domElement.getBoundingClientRect();
-  pointer.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
-  raycaster.setFromCamera(pointer, stage.camera);
-  const hit = raycaster.intersectObjects([...people.list().map((e) => e.model.root), ...island.houseObjects()], true)[0];
-  const key = hit && hit.object.userData.entityKey;
-  selectedId = key ? key.split(":")[0] : null;
-  if (!key) selectedProjectId = (hit && hit.object.userData.projectId) || null; // a house, or empty ground
-  panels.render(state, serverNow(), selectedId);
-  renderCard();
-});
-
-function selectProject(id) {
-  selectedProjectId = selectedProjectId === id ? null : id;
-  renderCard();
-}
-
-function renderCard() {
-  const project = selectedProjectId && state.projects.find((p) => p.id === selectedProjectId);
-  card.render(project || null, state.sessions, serverNow());
+function renderPanels() {
+  const now = serverNow();
+  panels.render(state, now, selectedId);
+  card.render(selectedProjectId ? projectById(selectedProjectId) || null : null, state.sessions, now);
+  directory.render(floors, archived, projectStatuses(), selectedProjectId);
 }
 
 // "running" while a session works in the project, "needsYou" while one waits for you.
@@ -152,6 +128,23 @@ function projectStatuses() {
   return map;
 }
 
+// Click a person to select them, a floor to open its project; empty space clears both.
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let downAt = null;
+stage.renderer.domElement.addEventListener("pointerdown", (ev) => (downAt = { x: ev.clientX, y: ev.clientY }));
+stage.renderer.domElement.addEventListener("pointerup", (ev) => {
+  if (!downAt || Math.hypot(ev.clientX - downAt.x, ev.clientY - downAt.y) > 5) return;
+  const rect = stage.renderer.domElement.getBoundingClientRect();
+  pointer.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
+  raycaster.setFromCamera(pointer, stage.camera);
+  const hit = raycaster.intersectObjects([...people.list().map((e) => e.model.root), ...tower.floorObjects()], true)[0];
+  const key = hit && hit.object.userData.entityKey;
+  selectedId = key ? key.split(":")[0] : null;
+  if (!key) selectedProjectId = (hit && hit.object.userData.projectId) || null;
+  renderPanels();
+});
+
 const clock = new THREE.Clock();
 let lastPanelRender = 0;
 function frame() {
@@ -162,18 +155,13 @@ function frame() {
   const night = nightAmount(now);
   stage.setNight(night);
   people.update(dt, t);
-  const entities = people.list();
-  island.update(t, {
-    night,
-    workshopBusy: entities.some((e) => e.place === "workshop" && e.pose === "hammer" && !e.walking),
-    litProjects: new Set(state.sessions.filter((s) => s.status === "working" || s.status === "thinking" || s.status === "needsYou").map((s) => s.projectId)),
-  });
+  const status = projectStatuses();
+  tower.update(t, { night, statusByProject: status });
   stage.render();
-  overlay.update(entities, [...plotByProject.values()], selectedId, projectStatuses(), selectedProjectId);
+  overlay.update(people.list(), floors, selectedId, status, selectedProjectId);
   if (t - lastPanelRender > 1) {
     lastPanelRender = t;
-    panels.render(state, serverNow(), selectedId);
-    renderCard();
+    renderPanels();
   }
   requestAnimationFrame(frame);
 }

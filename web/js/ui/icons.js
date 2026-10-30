@@ -18,23 +18,27 @@ export const ICONS = {
   chevron: wrap('<path d="M6 9l6 6 6-6"/>'),
   close: wrap('<path d="M6 6l12 12M18 6L6 18"/>'),
   users: wrap('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14a6 6 0 0 1 3.5 6"/>'),
+  code: wrap('<path d="M8 7l-5 5 5 5"/><path d="M16 7l5 5-5 5"/><path d="M13.5 4l-3 16"/>'),
+  building: wrap('<rect x="5" y="3" width="14" height="18" rx="1.5"/><path d="M9 7h1M14 7h1M9 11h1M14 11h1M9 15h1M14 15h1"/><path d="M11 21v-3h2v3"/>'),
+  search: wrap('<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>'),
+  archive: wrap('<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11h14V8"/><path d="M10 12h4"/>'),
   globe: wrap('<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/>'),
 };
 
-// Icon shown in a colonist's bubble for a pose.
+// Icon shown in a person's bubble for a pose.
 export const POSE_ICON = {
-  hammer: "hammer",
+  typing: "code",
   reading: "book",
-  telescope: "globe",
-  waving: "anchor",
+  watching: "globe",
+  waving: "users",
   thinking: "dots",
   resting: "moon",
   flag: "alert",
   idle: "dots",
 };
 
-// The workshop is where shell commands run, so its hammer reads better as a terminal.
+// At the server rack the typing is shell commands, so it reads better as a terminal.
 export function iconForEntity(e) {
-  if (e.pose === "hammer" && e.place === "workshop") return ICONS.terminal;
+  if (e.pose === "typing" && e.place === "workshop") return ICONS.terminal;
   return ICONS[POSE_ICON[e.pose] || "dots"];
 }
