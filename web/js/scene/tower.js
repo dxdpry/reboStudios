@@ -25,6 +25,7 @@ export function createTower(scene) {
   root.add(roof.group);
 
   const floors = new Map(); // projectId -> floor record
+  let focused = null;
   let order = []; // project ids, bottom to top
 
   // projects: the ones that get a floor, oldest first.
@@ -54,6 +55,7 @@ export function createTower(scene) {
       f.group.position.y = floorBaseY(index);
     });
     roof.group.position.y = floorBaseY(order.length + 1);
+    setFocus(focused && floors.has(focused) ? focused : null);
   }
 
   function floorIndexOf(projectId) {
@@ -66,7 +68,17 @@ export function createTower(scene) {
   }
 
   function floorObjects() {
-    return [...floors.values()].map((f) => f.group);
+    return [...floors.values()].filter((f) => f.group.visible).map((f) => f.group);
+  }
+
+  // Floor mode shows a single floor (no lobby, roof or other floors); null shows the whole tower.
+  function setFocus(projectId) {
+    focused = projectId;
+    lobby.visible = roof.group.visible = !projectId;
+    for (const [id, f] of floors) {
+      f.group.visible = !projectId || id === projectId;
+      f.setOpenTop(!!projectId);
+    }
   }
 
   // statusByProject: Map id -> "running" | "needsYou"
@@ -75,7 +87,7 @@ export function createTower(scene) {
     roof.update(t);
   }
 
-  return { sync, floorIndexOf, roofIndex, floorObjects, update, get count() { return order.length; } };
+  return { sync, floorIndexOf, roofIndex, floorObjects, setFocus, update, get count() { return order.length; } };
 }
 
 // Back walls: the project's accent softened with white, strong enough to tell floors apart.
@@ -155,11 +167,12 @@ function buildFloor(project, desks) {
   if (desks >= 4 && desks < 6) place(buildSofa(accentColor(project.id)), { x: -2.4, z: 1.6 }, Math.PI / 2);
 
   const ceilingMat = new THREE.MeshStandardMaterial({ color: "#fff7e6", emissive: "#fff1d0", emissiveIntensity: 0 });
-  for (const x of [-1.2, 2.2]) {
+  const ceiling = [-1.2, 2.2].map((x) => {
     const panel = mesh(new THREE.BoxGeometry(2.4, 0.05, 1), ceilingMat, { shadow: false, receive: false });
     panel.position.set(x, H - 0.04, 0.4);
     g.add(panel);
-  }
+    return panel;
+  });
   // Shade over idle floors, like an office with the lights off.
   const dimMat = new THREE.MeshBasicMaterial({ color: "#26304d", transparent: true, opacity: 0, depthWrite: false });
   const dim = new THREE.Mesh(new THREE.BoxGeometry(W - 0.3, H - SLAB - 0.04, D - 0.3), dimMat);
@@ -177,7 +190,12 @@ function buildFloor(project, desks) {
     ledMat.color.set(on && Math.floor(t * 3) % 2 ? "#7cf0b0" : "#3f8a66");
     dimMat.opacity = on ? 0 : 0.34 + night * 0.3;
   }
-  return { group: g, desks, setState, index: 0, project };
+  // Seen from above, the ceiling lights and the shade would hide the room.
+  function setOpenTop(open) {
+    for (const panel of ceiling) panel.visible = !open;
+    dim.visible = !open;
+  }
+  return { group: g, desks, setState, setOpenTop, index: 0, project };
 }
 
 function buildLobby() {

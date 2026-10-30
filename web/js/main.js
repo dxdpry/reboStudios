@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { createStage } from "./scene/stage.js";
 import { createTower } from "./scene/tower.js";
 import { createPeople } from "./scene/people.js";
-import { TOWER, ARCHIVE_BELOW_MS, floorBaseY, deskCount } from "./scene/towerLayout.js";
+import { TOWER, floorBaseY, floorTopY, deskCount } from "./scene/towerLayout.js";
 import { COLORS, hash, pick } from "./scene/materials.js";
 import { createOverlay } from "./ui/overlay.js";
 import { createPanels } from "./ui/panels.js";
@@ -15,13 +15,23 @@ import { nightAmount } from "./daylight.js";
 
 // ?hour=22 previews another time of day (for checking the night look).
 const HOUR_OVERRIDE = Number(new URLSearchParams(location.search).get("hour"));
+const FLOORS_PER_SCREEN = 10;
+const ROOF_EXTRA = 7; // roof terrace and crane above the top floor
+const BUILDING_MARGIN = 1.5;
 
 const stage = createStage(document.getElementById("stage"));
 const tower = createTower(stage.scene);
 const people = createPeople(stage.scene);
-const overlay = createOverlay(document.getElementById("overlay"), stage.camera, stage.renderer.domElement, (id) => select(id, false), (id) => pickProject(id));
-const card = createProjectCard(document.getElementById("project-card"), () => pickProject(null));
-const directory = createDirectory(document.getElementById("directory"), { onPick: (id) => pickProject(id, true) });
+const overlay = createOverlay(document.getElementById("overlay"), stage.camera, stage.renderer.domElement, (id) => select(id, false), (id) => openProject(id));
+const card = createProjectCard(document.getElementById("project-card"), () => closeProject());
+const directory = createDirectory(document.getElementById("directory"), {
+  open: (id) => openProject(id),
+  monitor: (projectId, on) => send({ type: "monitor", projectId, on }),
+  setCategory: (projectId, categoryId) => send({ type: "setCategory", projectId, categoryId }),
+  addCategory: (name) => send({ type: "addCategory", name }),
+  renameCategory: (categoryId, name) => send({ type: "renameCategory", categoryId, name }),
+  deleteCategory: (categoryId) => send({ type: "deleteCategory", categoryId }),
+});
 const panels = createPanels({
   counts: document.getElementById("counts"),
   alerts: document.getElementById("alerts"),
@@ -32,20 +42,24 @@ const panels = createPanels({
   colorOf: (projectId) => pick(COLORS.roof, hash(projectId) >>> 4),
 });
 const alerts = createAlerts(document.getElementById("alerts-toggle"));
-window.agentTower = { stage }; // for inspecting the scene from the devtools console
+window.reboStudios = { stage }; // for inspecting the scene from the devtools console
 
 const recenter = document.getElementById("recenter");
 recenter.innerHTML = ICONS.target;
 recenter.title = "Go to the top floor";
-recenter.addEventListener("click", () => stage.focusOnY(floorMid(tower.count)));
+recenter.addEventListener("click", () => (focusedProjectId ? closeProject() : stage.scrollTo(topScrollY())));
 
-let state = { now: Date.now(), projects: [], sessions: [] };
+const backButton = document.getElementById("back");
+backButton.addEventListener("click", () => closeProject());
+const emptyHint = document.getElementById("empty-hint");
+
+let state = { now: Date.now(), projects: [], sessions: [], workspace: { categories: [], projectCategory: {}, monitored: [] } };
 let clockOffset = 0;
 let selectedId = null;
 let selectedProjectId = null;
+let focusedProjectId = null; // floor mode
 let floors = []; // [{ project, index }] bottom to top
-let archived = [];
-let firstState = true;
+let floorsKey = "";
 
 connect();
 
@@ -61,36 +75,49 @@ function connect() {
     people.sync(state, (id) => tower.floorIndexOf(id), tower.roofIndex(), (id) => deskCount(projectById(id)));
     alerts.update(state);
     if (selectedId && !state.sessions.some((s) => s.id === selectedId)) selectedId = null;
-    if (firstState) {
-      firstState = false;
-      stage.focusOnY(floorMid(highestBusyFloor() || tower.count));
-    }
+    if (focusedProjectId && !tower.floorIndexOf(focusedProjectId)) closeProject();
     renderPanels();
   };
 }
 
-// Every project with real work (or someone on it now) gets a floor, oldest at the bottom.
+async function send(action) {
+  try {
+    await fetch("/api/workspace", { method: "POST", headers: { "Content-Type": "application/json", "X-Rebo": "1" }, body: JSON.stringify(action) });
+  } catch {
+    // The stream reconnects on its own; the change is simply not applied.
+  }
+}
+
+// Only monitored projects get a floor, oldest at the bottom.
 function layoutFloors() {
-  const live = new Set(state.sessions.filter((s) => s.status !== "ended").map((s) => s.projectId));
-  const byAge = [...state.projects].sort((a, b) => (a.firstSeenAt || 0) - (b.firstSeenAt || 0));
-  const withFloor = byAge.filter((p) => live.has(p.id) || (p.stats?.activeMs || 0) >= ARCHIVE_BELOW_MS);
-  archived = byAge.filter((p) => !withFloor.includes(p)).reverse();
+  const monitored = new Set(state.workspace.monitored);
+  const withFloor = state.projects.filter((p) => monitored.has(p.id)).sort((a, b) => (a.firstSeenAt || 0) - (b.firstSeenAt || 0));
   tower.sync(withFloor);
   floors = withFloor.map((project, i) => ({ project, index: i + 1 }));
-  stage.setScrollRange(2, floorBaseY(tower.count + 1) + 2);
+  emptyHint.hidden = floors.length > 0;
+  const key = floors.map((f) => f.project.id).join("|");
+  if (key !== floorsKey) {
+    floorsKey = key;
+    if (!focusedProjectId) showBuilding(true);
+  }
+}
+
+// The view fits up to ten floors; with more, it scrolls between the lobby and the roof.
+function showBuilding(toTop) {
+  const n = floors.length;
+  const visible = Math.min(n, FLOORS_PER_SCREEN);
+  const size = visible * TOWER.floorH + (n <= FLOORS_PER_SCREEN ? TOWER.lobbyH + ROOF_EXTRA : ROOF_EXTRA) + BUILDING_MARGIN * 2;
+  const min = n <= FLOORS_PER_SCREEN ? (floorBaseY(n + 1) + ROOF_EXTRA) / 2 : size / 2 - BUILDING_MARGIN;
+  const max = n <= FLOORS_PER_SCREEN ? min : floorBaseY(n + 1) + ROOF_EXTRA - size / 2 + BUILDING_MARGIN;
+  stage.showBuilding({ size, min, max, y: toTop ? max : undefined });
+}
+
+function topScrollY() {
+  return floorBaseY(floors.length + 1);
 }
 
 function projectById(id) {
   return state.projects.find((p) => p.id === id);
-}
-
-function floorMid(index) {
-  return floorBaseY(index) + TOWER.floorH / 2;
-}
-
-function highestBusyFloor() {
-  const status = projectStatuses();
-  return floors.filter((f) => status.has(f.project.id)).reduce((max, f) => Math.max(max, f.index), 0);
 }
 
 function serverNow() {
@@ -100,22 +127,52 @@ function serverNow() {
 function select(id, focus) {
   selectedId = selectedId === id && !focus ? null : id;
   const entity = selectedId && people.get(selectedId);
-  if (focus && entity) stage.focusOnY(entity.model.root.position.y + 1);
+  if (focus && entity) {
+    const projectId = entity.session.projectId;
+    if (tower.floorIndexOf(projectId) && !focusedProjectId) stage.scrollTo(entity.model.root.position.y + 1);
+  }
   renderPanels();
 }
 
-function pickProject(id, focus) {
-  selectedProjectId = selectedProjectId === id && !focus ? null : id;
-  const index = selectedProjectId ? tower.floorIndexOf(selectedProjectId) : 0;
-  if (focus && index) stage.focusOnY(floorMid(index));
+// Opening a project: its card, and (if it has a floor) the camera swings above that floor alone.
+function openProject(id) {
+  selectedProjectId = id;
+  const index = tower.floorIndexOf(id);
+  if (index) {
+    focusedProjectId = id;
+    tower.setFocus(id);
+    stage.showFloor({ y: floorTopY(index), width: TOWER.w, depth: TOWER.d });
+    backButton.hidden = false;
+  }
+  renderPanels();
+}
+
+function closeProject() {
+  const wasFocused = focusedProjectId;
+  focusedProjectId = null;
+  selectedProjectId = null;
+  tower.setFocus(null);
+  backButton.hidden = true;
+  if (wasFocused) {
+    showBuilding(false);
+    const index = tower.floorIndexOf(wasFocused);
+    if (index) stage.scrollTo(floorBaseY(index) + TOWER.floorH / 2);
+  }
   renderPanels();
 }
 
 function renderPanels() {
   const now = serverNow();
+  const status = projectStatuses();
   panels.render(state, now, selectedId);
   card.render(selectedProjectId ? projectById(selectedProjectId) || null : null, state.sessions, now);
-  directory.render(floors, archived, projectStatuses(), selectedProjectId);
+  directory.render({
+    projects: state.projects,
+    workspace: state.workspace,
+    status,
+    selectedProjectId,
+    liveSessionIds: new Set(state.sessions.filter((s) => s.status !== "ended").map((s) => s.id)),
+  });
 }
 
 // "running" while a session works in the project, "needsYou" while one waits for you.
@@ -128,7 +185,7 @@ function projectStatuses() {
   return map;
 }
 
-// Click a person to select them, a floor to open its project; empty space clears both.
+// Click a person to select them, a floor to open it; empty space clears the person selection.
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 let downAt = null;
@@ -138,11 +195,17 @@ stage.renderer.domElement.addEventListener("pointerup", (ev) => {
   const rect = stage.renderer.domElement.getBoundingClientRect();
   pointer.set(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1);
   raycaster.setFromCamera(pointer, stage.camera);
-  const hit = raycaster.intersectObjects([...people.list().map((e) => e.model.root), ...tower.floorObjects()], true)[0];
+  const visiblePeople = people.list().filter((e) => e.model.root.visible).map((e) => e.model.root);
+  const hit = raycaster.intersectObjects([...visiblePeople, ...tower.floorObjects()], true)[0];
   const key = hit && hit.object.userData.entityKey;
   selectedId = key ? key.split(":")[0] : null;
-  if (!key) selectedProjectId = (hit && hit.object.userData.projectId) || null;
-  renderPanels();
+  const projectId = !key && hit && hit.object.userData.projectId;
+  if (projectId && projectId !== focusedProjectId) openProject(projectId);
+  else renderPanels();
+});
+
+window.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && focusedProjectId) closeProject();
 });
 
 const clock = new THREE.Clock();
@@ -154,11 +217,12 @@ function frame() {
   if (Number.isFinite(HOUR_OVERRIDE) && HOUR_OVERRIDE > 0) now.setHours(HOUR_OVERRIDE, 0);
   const night = nightAmount(now);
   stage.setNight(night);
-  people.update(dt, t);
+  people.update(dt, t, focusedProjectId ? tower.floorIndexOf(focusedProjectId) : null);
   const status = projectStatuses();
   tower.update(t, { night, statusByProject: status });
-  stage.render();
-  overlay.update(people.list(), floors, selectedId, status, selectedProjectId);
+  stage.render(dt);
+  const visibleFloors = focusedProjectId ? floors.filter((f) => f.project.id === focusedProjectId) : floors;
+  overlay.update(people.list(), stage.mode === "floor" ? [] : visibleFloors, selectedId, status, selectedProjectId);
   if (t - lastPanelRender > 1) {
     lastPanelRender = t;
     renderPanels();

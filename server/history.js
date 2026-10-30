@@ -14,6 +14,7 @@ const IDLE_GAP_MS = 10 * 60 * 1000; // longer pauses inside a turn (waiting on y
 const WRITE_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
 const CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_LINE_BYTES = 64 * 1024 * 1024;
+const STORE_VERSION = 2; // bump to force a full rescan when the stored shape changes
 
 function createHistory(storeFile) {
   let store = load(storeFile);
@@ -74,7 +75,8 @@ function createHistory(storeFile) {
   }
 
   function handleLine(entry, line) {
-    // Cheap filter before JSON.parse: only user and assistant messages matter.
+    // Cheap filter before JSON.parse: only messages and chat titles matter.
+    if (line.startsWith('{"type":"custom-title"')) return setTitle(entry, line);
     if (!line.includes('"type":"user"') && !line.includes('"type":"assistant"')) return;
     let e;
     try {
@@ -92,13 +94,19 @@ function createHistory(storeFile) {
       store.names[project.id] = store.names[project.id] || { name: project.name, cwd: project.cwd };
     }
     const bucket = bucketFor(entry);
+    const chat = chatBucketFor(entry);
 
     const prompt = e.type === "user" && !e.isMeta && isRealPrompt(e.message);
     if (prompt && !entry.isSubagent) {
       bucket.prompts++;
+      chat.prompts++;
+      if (!entry.firstPrompt) entry.firstPrompt = promptText(e.message);
     } else if (entry.lastAt && ts - entry.lastAt < IDLE_GAP_MS && ts > entry.lastAt && !entry.isSubagent) {
       bucket.activeMs += ts - entry.lastAt;
+      chat.activeMs += ts - entry.lastAt;
     }
+    chat.lastAt = Math.max(chat.lastAt || 0, ts);
+    chat.firstAt = Math.min(chat.firstAt || ts, ts);
     entry.lastAt = ts;
     bucket.firstAt = Math.min(bucket.firstAt || ts, ts);
     bucket.lastAt = Math.max(bucket.lastAt || 0, ts);
@@ -135,6 +143,35 @@ function createHistory(storeFile) {
     return store.projects[id];
   }
 
+  // Per chat (transcript file), how much of it went to each project.
+  function chatBucketFor(entry) {
+    const id = entry.project || "unknown";
+    entry.chats = entry.chats || {};
+    if (!entry.chats[id]) entry.chats[id] = { firstAt: 0, lastAt: 0, activeMs: 0, prompts: 0 };
+    return entry.chats[id];
+  }
+
+  function setTitle(entry, line) {
+    try {
+      const e = JSON.parse(line);
+      if (e.customTitle) entry.title = String(e.customTitle).slice(0, 120);
+    } catch {
+      // A broken title line is not worth failing the scan for.
+    }
+  }
+
+  // Chats that worked on a project, most recent first.
+  function chats(projectId, limit = 40) {
+    const out = [];
+    for (const [file, entry] of Object.entries(store.files)) {
+      if (entry.isSubagent || !entry.chats || !entry.chats[projectId]) continue;
+      const c = entry.chats[projectId];
+      if (!c.prompts && c.activeMs < 60000) continue;
+      out.push({ id: path.basename(file, ".jsonl"), title: entry.title || entry.firstPrompt || "Untitled chat", ...c });
+    }
+    return out.sort((a, b) => b.lastAt - a.lastAt).slice(0, limit);
+  }
+
   function projects() {
     const out = {};
     for (const [id, stats] of Object.entries(store.projects)) {
@@ -148,7 +185,7 @@ function createHistory(storeFile) {
     save(storeFile, store);
   }
 
-  return { scanAll, scanFile, projects, persist, TRANSCRIPTS_DIR };
+  return { scanAll, scanFile, projects, chats, persist, TRANSCRIPTS_DIR };
 }
 
 function listTranscripts() {
@@ -172,6 +209,12 @@ function listTranscripts() {
 
 function newFileEntry(file) {
   return { offset: 0, project: null, lastAt: 0, lastUsageKey: null, lastUsage: null, isSubagent: /[\\/]subagents[\\/]/.test(file) };
+}
+
+function promptText(message) {
+  const content = message && message.content;
+  const text = typeof content === "string" ? content : Array.isArray(content) ? (content.find((c) => c && c.type === "text") || {}).text : "";
+  return String(text || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || null;
 }
 
 function isRealPrompt(message) {
@@ -206,11 +249,11 @@ function nameFromId(id) {
 function load(file) {
   try {
     const data = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (data.version === 1) return data;
+    if (data.version === STORE_VERSION) return data;
   } catch {
     // First run or unreadable store: rebuild from the transcripts.
   }
-  return { version: 1, files: {}, projects: {}, names: {} };
+  return { version: STORE_VERSION, files: {}, projects: {}, names: {} };
 }
 
 function save(file, store) {

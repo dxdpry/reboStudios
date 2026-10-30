@@ -1,4 +1,4 @@
-// Agent Island server: receives Claude Code hook events, keeps the island state and streams it to the browser.
+// Rebo Studios server: receives Claude Code hook events, keeps the office state and streams it to the browser.
 // Listens on 127.0.0.1 only. No dependencies.
 const http = require("http");
 const fs = require("fs");
@@ -6,6 +6,7 @@ const path = require("path");
 const { createState, applyEvent, prune, toPublic } = require("./state");
 const { createHistory } = require("./history");
 const { projectForFile, projectForCwd } = require("./projects");
+const { createWorkspace } = require("./workspace");
 
 const PORT = Number(process.env.AGENT_ISLAND_PORT) || 4848;
 const ROOT = path.join(__dirname, "..");
@@ -31,6 +32,7 @@ fs.mkdirSync(LOG_DIR, { recursive: true });
 
 const state = loadState();
 const history = createHistory(path.join(DATA_DIR, "history.json"));
+const workspace = createWorkspace(path.join(DATA_DIR, "workspace.json"));
 const transcriptTimers = new Map();
 const sseClients = new Set();
 let broadcastTimer = null;
@@ -42,11 +44,13 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && url.pathname === "/events") return handleSse(req, res);
   if (req.method === "GET" && url.pathname === "/state") return json(res, 200, publicState());
   if (req.method === "GET" && url.pathname === "/health") return json(res, 200, { ok: true });
+  if (req.method === "GET" && url.pathname === "/api/chats") return json(res, 200, history.chats(String(url.searchParams.get("project") || "")));
+  if (req.method === "POST" && url.pathname === "/api/workspace") return handleWorkspace(req, res);
   if (req.method === "GET") return serveStatic(url.pathname, res);
   json(res, 404, { error: "not found" });
 });
 
-function handleHook(req, res) {
+function readJson(req, res, onBody) {
   let size = 0;
   const chunks = [];
   req.on("data", (chunk) => {
@@ -55,16 +59,33 @@ function handleHook(req, res) {
     chunks.push(chunk);
   });
   req.on("end", () => {
-    let event;
+    let body;
     try {
-      event = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     } catch {
       return json(res, 400, { error: "bad json" });
     }
+    onBody(body);
+  });
+}
+
+function handleHook(req, res) {
+  readJson(req, res, (event) => {
     json(res, 200, { ok: true });
     appendLog(event);
     if (applyEvent(state, event.payload, Date.now(), RESOLVE)) changed();
     scheduleTranscriptScan(event.payload);
+  });
+}
+
+// Page actions (monitor a project, categories). The custom header can't be sent cross-origin
+// without a CORS preflight we never answer, so other websites can't drive this endpoint.
+function handleWorkspace(req, res) {
+  if (req.headers["x-rebo"] !== "1") return json(res, 403, { error: "forbidden" });
+  readJson(req, res, (action) => {
+    const ok = workspace.apply(action);
+    json(res, ok ? 200 : 400, { ok });
+    if (ok) changed();
   });
 }
 
@@ -84,7 +105,10 @@ function scheduleTranscriptScan(payload) {
 }
 
 function publicState() {
-  return toPublic(state, Date.now(), history.projects());
+  const pub = toPublic(state, Date.now(), history.projects());
+  workspace.fileNewProjects(pub.projects);
+  pub.workspace = workspace.toPublic();
+  return pub;
 }
 
 function handleSse(req, res) {

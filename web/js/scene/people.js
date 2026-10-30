@@ -113,7 +113,8 @@ export function createPeople(scene) {
     return entities.get(key);
   }
 
-  function update(dt, t) {
+  // onlyFloor: in floor mode, people elsewhere are hidden.
+  function update(dt, t, onlyFloor = null) {
     for (const e of entities.values()) {
       const pos = e.model.root.position;
       if (e.wait > 0) {
@@ -140,7 +141,7 @@ export function createPeople(scene) {
         turnTowards(e.model.root, e.target.facing || 0);
       }
       pos.y = floorTopY(e.floor);
-      e.model.root.visible = e.wait <= 0 && !(e.target.leaving && !e.walking);
+      e.model.root.visible = e.wait <= 0 && !(e.target.leaving && !e.walking) && (onlyFloor === null || e.floor === onlyFloor);
       animate(e, t);
     }
   }
