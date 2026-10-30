@@ -4,8 +4,6 @@
 import { ICONS } from "./icons.js";
 import { hours, ago } from "./format.js";
 
-const CHATS_REFRESH_MS = 30 * 1000;
-
 export function createDirectory(root, actions) {
   root.innerHTML = `
     <button class="panel-head" type="button">
@@ -33,7 +31,6 @@ export function createDirectory(root, actions) {
 
   const openCategories = new Set();
   const openProjects = new Set();
-  const chatCache = new Map(); // projectId -> { at, chats }
   const jumpCursor = { needsYou: 0, running: 0 };
   let last = null;
 
@@ -154,32 +151,18 @@ export function createDirectory(root, actions) {
     box.append(el("label", "dir-field", "Category"), select);
 
     const chats = el("ul", "dir-chats");
-    const cached = chatCache.get(project.id);
-    if (!cached || Date.now() - cached.at > CHATS_REFRESH_MS) loadChats(project.id);
-    if (!cached || cached.loading) chats.append(el("li", "dir-empty", "Loading chats…"));
-    else if (!cached.chats.length) chats.append(el("li", "dir-empty", "No chats yet."));
-    else {
-      for (const c of cached.chats) {
-        const item = el("li", `dir-chat${data.liveSessionIds.has(c.id) ? " live" : ""}`);
-        item.title = c.title;
-        item.append(el("span", "tag-dot"), el("span", "dir-chat-title", c.title), el("span", "dir-chat-meta", `${hours(c.activeMs)} · ${ago(Date.now() - c.lastAt)} ago`));
-        chats.append(item);
-      }
+    const list = project.chats || [];
+    if (!list.length) chats.append(el("li", "dir-empty", "No chats yet."));
+    for (const c of list) {
+      const item = el("li", `dir-chat${data.liveSessionIds.has(c.id) ? " live" : ""}`);
+      item.title = c.title;
+      item.append(el("span", "tag-dot"), el("span", "dir-chat-title", c.title), el("span", "dir-chat-meta", `${hours(c.activeMs)} · ${ago(Date.now() - c.lastAt)} ago`));
+      chats.append(item);
     }
-    box.append(el("div", "dir-field", `Chats${cached ? ` · ${cached.chats.length}` : ""}`), chats);
+    const more = (project.chatCount || 0) - list.length;
+    if (more > 0) chats.append(el("li", "dir-empty", `+${more} older chats`));
+    box.append(el("div", "dir-field", `Chats · ${project.chatCount || 0}`), chats);
     return box;
-  }
-
-  async function loadChats(projectId) {
-    const previous = chatCache.get(projectId);
-    chatCache.set(projectId, { at: Date.now(), chats: previous?.chats || [], loading: !previous });
-    try {
-      const res = await fetch(`/api/chats?project=${encodeURIComponent(projectId)}`);
-      chatCache.set(projectId, { at: Date.now(), chats: await res.json() });
-    } catch {
-      chatCache.delete(projectId);
-    }
-    if (last) render(last);
   }
 
   return { render };

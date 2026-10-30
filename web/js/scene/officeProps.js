@@ -83,40 +83,6 @@ export function buildServerRack(ledMaterial) {
   return flat(g);
 }
 
-export function buildTelescope() {
-  const g = new THREE.Group();
-  for (let i = 0; i < 3; i++) {
-    const leg = cylinder(0.025, 0.025, 1.2, "#6f7984", 4);
-    leg.position.set(Math.cos((i / 3) * Math.PI * 2) * 0.2, 0.58, Math.sin((i / 3) * Math.PI * 2) * 0.2);
-    leg.rotation.z = Math.cos((i / 3) * Math.PI * 2) * 0.25;
-    leg.rotation.x = -Math.sin((i / 3) * Math.PI * 2) * 0.25;
-    g.add(leg);
-  }
-  const tube = cylinder(0.08, 0.11, 0.9, "#f4f1ea", 8);
-  tube.position.y = 1.25;
-  tube.rotation.z = -1.0;
-  tube.rotation.y = -0.6;
-  g.add(tube);
-  return flat(g);
-}
-
-export function buildWhiteboard() {
-  const g = new THREE.Group();
-  const board = box(1.6, 1, 0.05, "#ffffff");
-  board.position.y = 1.5;
-  const frame = box(1.7, 1.1, 0.03, "#c3cad3");
-  frame.position.set(0, 1.5, -0.03);
-  g.add(board, frame);
-  const bars = ["#86d4b4", "#8fb8f2", "#f6c779", "#f29b8f"];
-  bars.forEach((color, i) => {
-    const h = 0.2 + i * 0.12;
-    const bar = box(0.18, h, 0.02, color);
-    bar.position.set(-0.45 + i * 0.3, 1.12 + h / 2, 0.04);
-    g.add(bar);
-  });
-  return flat(g);
-}
-
 export function buildPlant(seed = 0) {
   const g = new THREE.Group();
   const pot = cylinder(0.2, 0.15, 0.35, "#f4f1ea", 8);
@@ -189,53 +155,3 @@ export function buildReception() {
   return flat(g);
 }
 
-// Tower crane on the roof; `update` slowly swings the boom.
-export function buildCrane() {
-  const g = new THREE.Group();
-  const yellow = "#f2c14e";
-  const mast = box(0.5, 6, 0.5, yellow);
-  mast.position.y = 3;
-  g.add(mast);
-  for (let i = 0; i < 12; i++) {
-    const brace = box(0.55, 0.05, 0.55, "#d9a531");
-    brace.position.y = 0.25 + i * 0.5;
-    g.add(brace);
-  }
-  const swing = new THREE.Group();
-  swing.position.y = 6;
-  const boom = box(9, 0.35, 0.35, yellow);
-  boom.position.x = 2.5;
-  const counterweight = box(1.2, 0.7, 0.8, "#8b93a1");
-  counterweight.position.set(-1.8, -0.2, 0);
-  const cab = box(0.8, 0.7, 0.7, "#fbf7f0");
-  cab.position.set(0.6, -0.5, 0);
-  const cable = cylinder(0.02, 0.02, 3, "#4a3a33", 4);
-  cable.position.set(5.5, -1.5, 0);
-  const hook = box(0.9, 0.12, 0.9, "#b98a62");
-  hook.position.set(5.5, -3, 0);
-  swing.add(boom, counterweight, cab, cable, hook);
-  g.add(swing);
-  return {
-    group: g,
-    update(t) {
-      swing.rotation.y = -0.6 + Math.sin(t * 0.15) * 0.5;
-    },
-  };
-}
-
-// Far-away city block for the skyline.
-export function buildSkylineBlock(w, h, d, color) {
-  const g = new THREE.Group();
-  const body = box(w, h, d, color);
-  body.position.y = h / 2;
-  g.add(body);
-  const windowMat = mat("#fff2c8", { emissive: "#ffd98a", emissiveIntensity: 0 });
-  const rows = Math.max(1, Math.floor(h / 1.2));
-  for (let r = 0; r < rows; r++) {
-    const strip = box(w * 0.8, 0.25, 0.04, "#fff2c8");
-    strip.material = windowMat;
-    strip.position.set(0, 0.8 + r * 1.2, d / 2 + 0.02);
-    g.add(strip);
-  }
-  return { group: flat(g), windowMat };
-}

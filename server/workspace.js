@@ -1,34 +1,29 @@
 // The user's own organisation of projects: categories (like the Claude app's sidebar groups) and
 // which projects are "monitored" (get a floor in the tower). Persisted in data/workspace.json.
+// First run copies the Claude app's groups from data/claude-groups.json (title -> group).
 const fs = require("fs");
+const path = require("path");
 const crypto = require("crypto");
 
 const NAME_MAX = 40;
 const CATEGORY_MAX = 30;
 const OTHER = { id: "other", name: "Other" };
-// First run: the same groups the user has in the Claude app, with projects placed by name.
-const SEED = [
-  { name: "Roblox", match: /roblox|kaiju|ragdoll|poop|pack_personagens|monstros|reliquias|baus_/i },
-  { name: "vozerio", match: /vozerio|cordless|minirede/i },
-  { name: "Chatbot wpp", match: /userebo|chatbot/i },
-  { name: "FINANCEIRA", match: /vault|financ/i },
-  { name: "SERVICIO", match: /vecino|retuvi|servic/i },
-];
 
 function createWorkspace(file) {
-  let data = load(file);
+  const claude = loadClaudeGroups(path.join(path.dirname(file), "claude-groups.json"));
+  let data = load(file, claude);
 
   function save() {
     fs.writeFile(file, JSON.stringify(data, null, 2), () => {});
   }
 
-  // Projects seen for the first time are filed by the seed rules (or into Other) once.
+  // Projects seen for the first time go to the category their chat has in the Claude app (or Other), once.
   function fileNewProjects(projects) {
     let changed = false;
     for (const p of projects) {
       if (data.projectCategory[p.id]) continue;
-      const rule = SEED.find((r) => r.match.test(p.name));
-      const category = rule && data.categories.find((c) => c.name === rule.name);
+      const group = claude.titles.get(String(p.name).toLowerCase().trim());
+      const category = group && data.categories.find((c) => c.name === group);
       data.projectCategory[p.id] = category ? category.id : OTHER.id;
       changed = true;
     }
@@ -88,15 +83,25 @@ function cleanName(name) {
   return typeof name === "string" ? name.replace(/\s+/g, " ").trim().slice(0, NAME_MAX) : "";
 }
 
-function load(file) {
+function load(file, claude) {
   try {
     const data = JSON.parse(fs.readFileSync(file, "utf8"));
     if (Array.isArray(data.categories) && Array.isArray(data.monitored) && data.projectCategory) return data;
   } catch {
-    // First run: start from the seed.
+    // First run: start from the Claude app's groups.
   }
-  const categories = SEED.map((s, i) => ({ id: `c-seed${i}`, name: s.name }));
+  const categories = claude.groups.map((name, i) => ({ id: `c-claude${i}`, name }));
   return { categories: [...categories, OTHER], projectCategory: {}, monitored: [] };
+}
+
+function loadClaudeGroups(file) {
+  try {
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    const titles = new Map(Object.entries(data.titles || {}).map(([title, group]) => [title.toLowerCase().trim(), group]));
+    return { groups: Array.isArray(data.groups) ? data.groups.map(String) : [], titles };
+  } catch {
+    return { groups: [], titles: new Map() };
+  }
 }
 
 module.exports = { createWorkspace };

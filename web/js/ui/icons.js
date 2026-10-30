@@ -32,6 +32,7 @@ export const POSE_ICON = {
   watching: "globe",
   waving: "users",
   thinking: "dots",
+  "thinking-seated": "dots",
   resting: "moon",
   flag: "alert",
   idle: "dots",

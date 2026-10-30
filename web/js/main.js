@@ -10,13 +10,14 @@ import { createPanels } from "./ui/panels.js";
 import { createProjectCard } from "./ui/projectCard.js";
 import { createDirectory } from "./ui/directory.js";
 import { ICONS } from "./ui/icons.js";
+import { ago, hours as formatHours } from "./ui/format.js";
 import { createAlerts } from "./notify.js";
 import { nightAmount } from "./daylight.js";
 
 // ?hour=22 previews another time of day (for checking the night look).
 const HOUR_OVERRIDE = Number(new URLSearchParams(location.search).get("hour"));
 const FLOORS_PER_SCREEN = 10;
-const ROOF_EXTRA = 7; // roof terrace and crane above the top floor
+const ROOF_EXTRA = 2.5; // roof lounge above the top floor
 const BUILDING_MARGIN = 1.5;
 
 const stage = createStage(document.getElementById("stage"));
@@ -72,7 +73,7 @@ function connect() {
     state = JSON.parse(msg.data);
     clockOffset = state.now - Date.now();
     layoutFloors();
-    people.sync(state, (id) => tower.floorIndexOf(id), tower.roofIndex(), (id) => deskCount(projectById(id)));
+    people.sync(state, (id) => tower.floorIndexOf(id), tower.roofIndex(), deskOf);
     alerts.update(state);
     if (selectedId && !state.sessions.some((s) => s.id === selectedId)) selectedId = null;
     if (focusedProjectId && !tower.floorIndexOf(focusedProjectId)) closeProject();
@@ -114,6 +115,62 @@ function showBuilding(toTop) {
 
 function topScrollY() {
   return floorBaseY(floors.length + 1);
+}
+
+// A session sits at the desk of its own chat (the project's chats are sorted most recent first).
+function deskOf(session) {
+  const project = projectById(session.projectId);
+  if (!project) return 0;
+  const i = (project.chats || []).findIndex((c) => c.id === session.id);
+  return i >= 0 && i < deskCount(project) ? i : 0;
+}
+
+const ACTIVE = new Set(["working", "thinking", "needsYou"]);
+const STATUS_RANK = { needsYou: 0, working: 1, thinking: 2 };
+
+// Per project: its status and what its most urgent session is doing right now.
+function projectInfo() {
+  const map = new Map();
+  for (const s of state.sessions) {
+    if (!ACTIVE.has(s.status)) continue;
+    const current = map.get(s.projectId);
+    if (current && STATUS_RANK[current.rank] <= STATUS_RANK[s.status]) continue;
+    map.set(s.projectId, { status: s.status === "needsYou" ? "needsYou" : "running", rank: s.status, activity: s.status === "needsYou" ? s.needsYou?.detail || s.activity : s.activity });
+  }
+  return map;
+}
+
+function busyDesks() {
+  const map = new Map();
+  for (const s of state.sessions) {
+    if (!ACTIVE.has(s.status)) continue;
+    if (!map.has(s.projectId)) map.set(s.projectId, new Set());
+    map.get(s.projectId).add(deskOf(s));
+  }
+  return map;
+}
+
+// Floor mode: one tag per desk with the chat's title and whether it is running now.
+function focusDesks() {
+  if (!focusedProjectId) return null;
+  const project = projectById(focusedProjectId);
+  if (!project) return null;
+  const live = new Map(state.sessions.filter((s) => ACTIVE.has(s.status)).map((s) => [s.id, s]));
+  const desks = [];
+  for (let i = 0; i < deskCount(project); i++) {
+    const chat = (project.chats || [])[i];
+    const session = chat && live.get(chat.id);
+    if (!chat) {
+      desks.push({ title: "New chat", meta: "", status: "idle" });
+      continue;
+    }
+    desks.push({
+      title: chat.title,
+      meta: session ? session.activity : `${formatHours(chat.activeMs)} · ${ago(Date.now() - chat.lastAt)} ago`,
+      status: session ? (session.status === "needsYou" ? "needsYou" : "running") : "idle",
+    });
+  }
+  return { index: tower.floorIndexOf(project.id), desks };
 }
 
 function projectById(id) {
@@ -219,10 +276,9 @@ function frame() {
   stage.setNight(night);
   people.update(dt, t, focusedProjectId ? tower.floorIndexOf(focusedProjectId) : null);
   const status = projectStatuses();
-  tower.update(t, { night, statusByProject: status });
+  tower.update(t, { night, statusByProject: status, busyDesks: busyDesks() });
   stage.render(dt);
-  const visibleFloors = focusedProjectId ? floors.filter((f) => f.project.id === focusedProjectId) : floors;
-  overlay.update(people.list(), stage.mode === "floor" ? [] : visibleFloors, selectedId, status, selectedProjectId);
+  overlay.update(people.list(), focusedProjectId ? [] : floors, selectedId, projectInfo(), selectedProjectId, focusDesks());
   if (t - lastPanelRender > 1) {
     lastPanelRender = t;
     renderPanels();

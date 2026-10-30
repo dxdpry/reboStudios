@@ -67,8 +67,9 @@ export function createPeople(scene) {
   const entities = new Map();
   let firstSync = true;
 
-  // floorOf(projectId) -> floor index (0 = lobby when the project has no floor); roof = roof index.
-  function sync(state, floorOf, roof, desksOf) {
+  // floorOf(projectId) -> floor index (0 = lobby when the project has no floor); roof = roof index;
+  // deskOf(session) -> index of the desk of that session's chat on its floor.
+  function sync(state, floorOf, roof, deskOf) {
     const seen = new Set();
     const slots = new Map();
     const nextSlot = (key) => {
@@ -81,14 +82,14 @@ export function createPeople(scene) {
       const floor = floorOf(s.projectId);
       const place = s.status === "ended" ? "boat" : s.place;
       const key = place === "beach" || place === "boat" ? place : `${floor}:${place}`;
-      const target = spotFor(place, floor, roof, nextSlot(key), desksOf(s.projectId));
+      const target = spotFor(place, floor, roof, nextSlot(key), deskOf(s));
       const e = upsert(s.id, looksFor(s.id), false, firstSync ? target : { ...ELEVATOR_SPOT, floor });
       Object.assign(e, { session: s, helper: null, target, place, pose: poseFor(s.status, place, target) });
       seen.add(s.id);
 
       for (const h of s.helpers || []) {
         const hk = `${s.id}:${h.id}`;
-        const hTarget = spotFor(h.place, floor, roof, nextSlot(`${floor}:${h.place}`), desksOf(s.projectId));
+        const hTarget = spotFor(h.place === "site" || h.place === "door" ? "library" : h.place, floor, roof, nextSlot(`${floor}:${h.place}`), 0);
         const helper = upsert(hk, looksFor(h.id), true, firstSync ? hTarget : { ...ELEVATOR_SPOT, floor });
         Object.assign(helper, { session: s, helper: h, target: hTarget, place: h.place, pose: POSE_BY_PLACE[h.place] || "thinking" });
         seen.add(hk);
@@ -170,6 +171,11 @@ export function createPeople(scene) {
         feet[0].position.z = Math.sin(p * 10) * 0.14;
         feet[1].position.z = -Math.sin(p * 10) * 0.14;
         break;
+      case "thinking-seated":
+        body.position.y = -0.28;
+        hands[1].position.set(0.18, 0.86, 0.24);
+        head.rotation.z = Math.sin(p * 1.2) * 0.08;
+        break;
       case "typing":
         if (e.target.seated) body.position.y = -0.28;
         hands[0].position.set(-0.18, 0.62 + Math.max(0, Math.sin(p * 18)) * 0.05, 0.3);
@@ -229,7 +235,7 @@ export function createPeople(scene) {
 function poseFor(status, place, target) {
   if (status === "needsYou") return "flag";
   if (status === "done") return place === "beach" ? "resting" : "idle";
-  if (status === "thinking") return target.seated ? "typing" : "thinking";
+  if (status === "thinking") return target.seated ? "thinking-seated" : "thinking";
   if (status === "working") return POSE_BY_PLACE[place] || "thinking";
   return "idle";
 }

@@ -16,7 +16,7 @@ export function createProjectCard(root, onClose) {
     <dl class="card-grid">
       <div><dt>Started</dt><dd data-k="started"></dd></div>
       <div><dt>Time with Claude</dt><dd data-k="hours"></dd></div>
-      <div><dt>Prompts</dt><dd data-k="prompts"></dd></div>
+      <div><dt>Prompts · chats</dt><dd data-k="prompts"></dd></div>
       <div><dt>Tokens</dt><dd data-k="tokens"></dd></div>
     </dl>
     <div class="card-tokens"></div>
@@ -32,14 +32,15 @@ export function createProjectCard(root, onClose) {
     const status = live.some((s) => s.status === "needsYou") ? "needsYou" : live.some((s) => s.status === "working" || s.status === "thinking") ? "running" : "idle";
     root.dataset.status = status;
     q(".card-name").textContent = project.name;
-    q(".card-path").textContent = project.cwd || "";
+    const folders = project.folders || [];
+    q(".card-path").textContent = folders.length ? `Works in ${folders.slice(0, 3).join(", ")}${folders.length > 3 ? ` +${folders.length - 3}` : ""}` : `${project.chatCount || 0} chats`;
     q(".card-status").textContent =
       status === "idle"
         ? `Idle · last activity ${ago(now - project.lastActiveAt)} ago`
         : `${status === "needsYou" ? "Waiting for you" : "Running"} · ${live.length} session${live.length > 1 ? "s" : ""} on it now`;
     q('[data-k="started"]').textContent = date(project.firstSeenAt);
     q('[data-k="hours"]').textContent = hours(stats.activeMs);
-    q('[data-k="prompts"]').textContent = String(stats.prompts);
+    q('[data-k="prompts"]').textContent = `${stats.prompts} · ${project.chatCount || 0}`;
     q('[data-k="tokens"]').textContent = compact(freshTokens(stats.tokens));
     const t = stats.tokens;
     q(".card-tokens").textContent = `in ${compact(t.input)} · out ${compact(t.output)} · cache write ${compact(t.cacheWrite)} · cache read ${compact(t.cacheRead)}`;

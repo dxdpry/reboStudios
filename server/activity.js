@@ -84,4 +84,11 @@ function clip(text) {
   return line.length > LABEL_MAX ? line.slice(0, LABEL_MAX - 1) + "…" : line;
 }
 
-module.exports = { placeForTool, labelForTool, projectFromCwd, clip };
+// A project is what the Claude app lists: a chat title. Same title = same project (case and
+// spacing don't matter); a chat without a title stands alone.
+function projectKey(title, chatId) {
+  const t = String(title || "").toLowerCase().replace(/\s+/g, " ").trim();
+  return t ? `t:${t}` : `c:${chatId}`;
+}
+
+module.exports = { placeForTool, labelForTool, projectFromCwd, projectKey, clip };

@@ -8,13 +8,16 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { projectForFile, projectForCwd, isIgnored } = require("./projects");
+const { projectKey } = require("./activity");
 
 const TRANSCRIPTS_DIR = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "projects");
 const IDLE_GAP_MS = 10 * 60 * 1000; // longer pauses inside a turn (waiting on you) are not counted
 const WRITE_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit"]);
 const CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_LINE_BYTES = 64 * 1024 * 1024;
-const STORE_VERSION = 2; // bump to force a full rescan when the stored shape changes
+const STORE_VERSION = 4; // bump to force a full rescan when the stored shape changes
+// Openings of continued or interrupted chats that are not the user's own first prompt.
+const CONTINUATION = /^(this session is being continued|caveat:|\[request interrupted)/i;
 
 function createHistory(storeFile) {
   let store = load(storeFile);
@@ -87,68 +90,56 @@ function createHistory(storeFile) {
     if (e.type !== "user" && e.type !== "assistant") return;
     const ts = Date.parse(e.timestamp);
     if (!Number.isFinite(ts)) return;
-    if (!entry.project && e.cwd && isIgnored(e.cwd + "/.")) entry.project = "unknown"; // temp/test folders
-    if (!entry.project && e.cwd) {
-      const project = projectForCwd(e.cwd);
-      entry.project = project.id;
-      store.names[project.id] = store.names[project.id] || { name: project.name, cwd: project.cwd };
-    }
-    const bucket = bucketFor(entry);
-    const chat = chatBucketFor(entry);
+    // Chats run from temp/test folders are not projects.
+    if (e.cwd && entry.folder === null && isIgnored(e.cwd + "/.")) entry.ignored = true;
+    // The cwd is only a fallback main folder; "works in" lists the folders actually written.
+    if (!entry.folder && e.cwd && !isIgnored(e.cwd + "/.")) entry.folder = projectForCwd(e.cwd).id;
+    const totals = totalsFor(entry);
 
     const prompt = e.type === "user" && !e.isMeta && isRealPrompt(e.message);
     if (prompt && !entry.isSubagent) {
-      bucket.prompts++;
-      chat.prompts++;
+      totals.prompts++;
       if (!entry.firstPrompt) entry.firstPrompt = promptText(e.message);
     } else if (entry.lastAt && ts - entry.lastAt < IDLE_GAP_MS && ts > entry.lastAt && !entry.isSubagent) {
-      bucket.activeMs += ts - entry.lastAt;
-      chat.activeMs += ts - entry.lastAt;
+      totals.activeMs += ts - entry.lastAt;
     }
-    chat.lastAt = Math.max(chat.lastAt || 0, ts);
-    chat.firstAt = Math.min(chat.firstAt || ts, ts);
     entry.lastAt = ts;
-    bucket.firstAt = Math.min(bucket.firstAt || ts, ts);
-    bucket.lastAt = Math.max(bucket.lastAt || 0, ts);
+    totals.firstAt = Math.min(totals.firstAt || ts, ts);
+    totals.lastAt = Math.max(totals.lastAt || 0, ts);
 
     if (e.type === "assistant") {
-      addUsage(entry, bucket, e);
+      addUsage(entry, totals, e);
       for (const block of contentBlocks(e.message)) {
         if (block.type !== "tool_use" || !WRITE_TOOLS.has(block.name)) continue;
-        const project = projectForFile(block.input && (block.input.file_path || block.input.notebook_path));
-        if (project) {
-          entry.project = project.id;
-          store.names[project.id] = { name: project.name, cwd: project.cwd };
-        }
+        const folder = projectForFile(block.input && (block.input.file_path || block.input.notebook_path));
+        if (folder) noteFolder(entry, folder);
       }
     }
   }
 
+  // Folders a chat wrote to (shown as "works in"); the first one seen is its main folder.
+  function noteFolder(entry, folder) {
+    entry.folders = entry.folders || {};
+    entry.folders[folder.id] = { name: folder.name, cwd: folder.cwd };
+    entry.folder = entry.folder || folder.id;
+  }
+
   // Lines of one streamed message repeat its usage; count each message once, keeping the largest.
-  function addUsage(entry, bucket, e) {
+  function addUsage(entry, totals, e) {
     const key = (e.message && e.message.id) || e.requestId;
     const usage = sumUsage(e.message && e.message.usage);
     if (!usage) return;
     const previous = entry.lastUsageKey === key ? entry.lastUsage : null;
-    for (const k of Object.keys(usage)) bucket.tokens[k] += Math.max(0, usage[k] - (previous ? previous[k] : 0));
+    for (const k of Object.keys(usage)) totals.tokens[k] += Math.max(0, usage[k] - (previous ? previous[k] : 0));
     if (!previous || usage.output >= previous.output) {
       entry.lastUsageKey = key;
       entry.lastUsage = usage;
     }
   }
 
-  function bucketFor(entry) {
-    const id = entry.project || "unknown";
-    if (!store.projects[id]) store.projects[id] = { firstAt: 0, lastAt: 0, activeMs: 0, prompts: 0, tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 } };
-    return store.projects[id];
-  }
-
-  // Per chat (transcript file), how much of it went to each project.
-  function chatBucketFor(entry) {
-    const id = entry.project || "unknown";
-    entry.chats = entry.chats || {};
-    if (!entry.chats[id]) entry.chats[id] = { firstAt: 0, lastAt: 0, activeMs: 0, prompts: 0 };
-    return entry.chats[id];
+  function totalsFor(entry) {
+    if (!entry.totals) entry.totals = { firstAt: 0, lastAt: 0, activeMs: 0, prompts: 0, tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 } };
+    return entry.totals;
   }
 
   function setTitle(entry, line) {
@@ -160,24 +151,32 @@ function createHistory(storeFile) {
     }
   }
 
-  // Chats that worked on a project, most recent first.
-  function chats(projectId, limit = 40) {
-    const out = [];
-    for (const [file, entry] of Object.entries(store.files)) {
-      if (entry.isSubagent || !entry.chats || !entry.chats[projectId]) continue;
-      const c = entry.chats[projectId];
-      if (!c.prompts && c.activeMs < 60000) continue;
-      out.push({ id: path.basename(file, ".jsonl"), title: entry.title || entry.firstPrompt || "Untitled chat", ...c });
-    }
-    return out.sort((a, b) => b.lastAt - a.lastAt).slice(0, limit);
-  }
-
+  // Projects as the Claude app shows them: chats grouped by title (a resumed chat keeps its title).
+  // Subagent transcripts add their tokens to the chat that started them.
   function projects() {
+    const byFile = new Map(Object.entries(store.files));
     const out = {};
-    for (const [id, stats] of Object.entries(store.projects)) {
-      if (id === "unknown") continue;
-      out[id] = { ...stats, ...(store.names[id] || nameFromId(id)) };
+    for (const [file, entry] of byFile) {
+      if (entry.isSubagent || entry.ignored || !entry.totals) continue;
+      const t = entry.totals;
+      if (!t.prompts && t.activeMs < 60000) continue;
+      const id = projectKey(entry.title, path.basename(file, ".jsonl"));
+      const p = out[id] || (out[id] = { id, name: entry.title || entry.firstPrompt || "Untitled chat", firstAt: t.firstAt, lastAt: 0, activeMs: 0, prompts: 0, tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 }, chats: [], folders: {} });
+      p.firstAt = Math.min(p.firstAt || t.firstAt, t.firstAt);
+      p.lastAt = Math.max(p.lastAt, t.lastAt);
+      p.activeMs += t.activeMs;
+      p.prompts += t.prompts;
+      addTokens(p.tokens, t.tokens);
+      Object.assign(p.folders, entry.folders || {});
+      p.chats.push({ id: path.basename(file, ".jsonl"), title: entry.firstPrompt || `Chat of ${dayLabel(t.firstAt)}`, firstAt: t.firstAt, lastAt: t.lastAt, activeMs: t.activeMs, prompts: t.prompts });
     }
+    for (const [file, entry] of byFile) {
+      if (!entry.isSubagent || !entry.totals) continue;
+      const parent = byFile.get(path.join(path.dirname(path.dirname(file)), "..", path.basename(path.dirname(path.dirname(file))) + ".jsonl"));
+      const owner = parent && out[projectKey(parent.title, path.basename(path.dirname(path.dirname(file))))];
+      if (owner) addTokens(owner.tokens, entry.totals.tokens);
+    }
+    for (const p of Object.values(out)) p.chats.sort((a, b) => b.lastAt - a.lastAt);
     return out;
   }
 
@@ -185,7 +184,7 @@ function createHistory(storeFile) {
     save(storeFile, store);
   }
 
-  return { scanAll, scanFile, projects, chats, persist, TRANSCRIPTS_DIR };
+  return { scanAll, scanFile, projects, persist, TRANSCRIPTS_DIR };
 }
 
 function listTranscripts() {
@@ -208,13 +207,16 @@ function listTranscripts() {
 }
 
 function newFileEntry(file) {
-  return { offset: 0, project: null, lastAt: 0, lastUsageKey: null, lastUsage: null, isSubagent: /[\\/]subagents[\\/]/.test(file) };
+  return { offset: 0, folder: null, lastAt: 0, lastUsageKey: null, lastUsage: null, isSubagent: /[\\/]subagents[\\/]/.test(file) };
 }
 
 function promptText(message) {
   const content = message && message.content;
   const text = typeof content === "string" ? content : Array.isArray(content) ? (content.find((c) => c && c.type === "text") || {}).text : "";
-  return String(text || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || null;
+  const clean = String(text || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  // Automatic summaries at the start of a continued chat say nothing about it; wait for a real prompt.
+  if (!clean || CONTINUATION.test(clean)) return null;
+  return clean.slice(0, 80);
 }
 
 function isRealPrompt(message) {
@@ -241,9 +243,12 @@ function sumUsage(u) {
   return total;
 }
 
-function nameFromId(id) {
-  const cwd = id.replace(/\/+$/, "");
-  return { name: path.posix.basename(cwd) || cwd, cwd };
+function dayLabel(ms) {
+  return new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+function addTokens(into, from) {
+  for (const k of Object.keys(into)) into[k] += from[k] || 0;
 }
 
 function load(file) {
@@ -253,7 +258,7 @@ function load(file) {
   } catch {
     // First run or unreadable store: rebuild from the transcripts.
   }
-  return { version: STORE_VERSION, files: {}, projects: {}, names: {} };
+  return { version: STORE_VERSION, files: {} };
 }
 
 function save(file, store) {

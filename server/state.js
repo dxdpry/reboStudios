@@ -1,8 +1,9 @@
 // Island state built from hook events: projects (buildings) and sessions (colonists).
 // applyEvent and prune are pure over the state object, so they can be tested without a server.
-const { placeForTool, labelForTool, projectFromCwd, clip } = require("./activity");
+const { placeForTool, labelForTool, projectFromCwd, projectKey, clip } = require("./activity");
 
 const ENDED_LINGER_MS = 20 * 1000;
+const CHATS_IN_STATE = 8; // most recent chats per project sent to the page
 const STALE_SESSION_MS = 2 * 60 * 60 * 1000;
 const NEEDS_YOU_NOTIFICATIONS = new Set(["permission_prompt", "agent_needs_input", "elicitation_dialog"]);
 
@@ -20,14 +21,15 @@ function applyEvent(state, payload, now, resolve = DEFAULT_RESOLVE) {
   if (!id || !event) return false;
 
   const session = state.sessions[id] || (state.sessions[id] = newSession(id, now));
-  // A session belongs to the project of the files it writes; until then, to its cwd.
-  const written = WRITE_TOOLS.has(payload.tool_name) && payload.tool_input && resolve.projectForFile(payload.tool_input.file_path || payload.tool_input.notebook_path);
-  const project = written || (session.projectId ? null : resolve.projectForCwd(payload.cwd));
-  if (project) session.projectId = touchProject(state, project, now).id;
-  else if (state.projects[session.projectId]) state.projects[session.projectId].lastActiveAt = now;
   session.lastEventAt = now;
   if (payload.transcript_path) session.transcriptPath = payload.transcript_path;
-  if (payload.session_title) session.title = clip(payload.session_title);
+  // Kept whole (not clipped): the title is the project key and must match the transcript's.
+  if (payload.session_title) session.title = String(payload.session_title).slice(0, 120);
+  // The project is the chat's title, as in the Claude app. The folder it writes to is kept as detail.
+  const written = WRITE_TOOLS.has(payload.tool_name) && payload.tool_input && resolve.projectForFile(payload.tool_input.file_path || payload.tool_input.notebook_path);
+  const folder = written || (session.folder ? null : resolve.projectForCwd(payload.cwd));
+  if (folder) session.folder = { id: folder.id, name: folder.name, cwd: folder.cwd };
+  session.projectId = touchProject(state, projectKey(session.title, id), session.title || "Untitled chat", now).id;
 
   const tool = payload.tool_name;
   const toolLabel = tool ? labelForTool(tool, payload.tool_input || {}) : "";
@@ -117,13 +119,22 @@ function toPublic(state, now, history = {}) {
   const sessions = Object.values(state.sessions).map((s) => ({ ...s, helpers: Object.values(s.helpers) }));
   const byId = new Map();
   for (const [id, h] of Object.entries(history)) {
-    byId.set(id, { id, name: h.name, cwd: h.cwd, firstSeenAt: h.firstAt, lastActiveAt: h.lastAt, stats: statsOf(h) });
+    byId.set(id, {
+      id,
+      name: h.name,
+      firstSeenAt: h.firstAt,
+      lastActiveAt: h.lastAt,
+      stats: statsOf(h),
+      chatCount: (h.chats || []).length,
+      chats: (h.chats || []).slice(0, CHATS_IN_STATE),
+      folders: Object.values(h.folders || {}).map((f) => f.name),
+    });
   }
   const inUse = new Set(sessions.map((s) => s.projectId));
   for (const p of Object.values(state.projects)) {
     // A project only seen live (no transcript history yet) disappears once nobody is on it.
     if (!byId.has(p.id) && !inUse.has(p.id)) continue;
-    const merged = byId.get(p.id) || { ...p, stats: statsOf(null) };
+    const merged = byId.get(p.id) || { ...p, stats: statsOf(null), chatCount: 0, chats: [], folders: [] };
     merged.firstSeenAt = Math.min(merged.firstSeenAt || p.firstSeenAt, p.firstSeenAt);
     merged.lastActiveAt = Math.max(merged.lastActiveAt || 0, p.lastActiveAt);
     byId.set(p.id, merged);
@@ -136,8 +147,9 @@ function statsOf(h) {
   return h ? { activeMs: h.activeMs, prompts: h.prompts, tokens: h.tokens } : { activeMs: 0, prompts: 0, tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 } };
 }
 
-function touchProject(state, { id, name, cwd }, now) {
-  const project = state.projects[id] || (state.projects[id] = { id, name, cwd, firstSeenAt: now });
+function touchProject(state, id, name, now) {
+  const project = state.projects[id] || (state.projects[id] = { id, name, firstSeenAt: now });
+  project.name = name;
   project.lastActiveAt = now;
   return project;
 }

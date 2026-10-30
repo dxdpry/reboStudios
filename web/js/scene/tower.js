@@ -1,28 +1,27 @@
-// The office tower: lobby, one floor per project (oldest at the bottom), roof terrace with a crane,
-// and a small city around it. Floors are rebuilt only when their project or size changes.
+// The office tower: lobby, one floor per monitored project (oldest at the bottom) and a roof lounge.
+// Each floor has one desk per chat of the project, a bookshelf (reading), a server rack (commands)
+// and a window corner (web). Floors are rebuilt only when their project or desk count changes.
 import * as THREE from "three";
 import { COLORS, mat, mesh, box, flat, hash, pick } from "./materials.js";
 import { TOWER, DESKS, FURNITURE, ROOF_CHAIRS, floorBaseY, deskCount } from "./towerLayout.js";
-import {
-  buildDesk, screenMaterial, buildBookshelf, buildServerRack, buildTelescope, buildWhiteboard,
-  buildPlant, buildSofa, buildDeckChair, buildCoffeeBar, buildReception, buildCrane, buildSkylineBlock,
-} from "./officeProps.js";
+import { buildDesk, screenMaterial, buildBookshelf, buildServerRack, buildPlant, buildSofa, buildDeckChair, buildCoffeeBar, buildReception } from "./officeProps.js";
 
 const { w: W, d: D, floorH: H, lobbyH: LOBBY_H, slab: SLAB } = TOWER;
-const GLASS = new THREE.MeshStandardMaterial({ color: "#cfeaf7", transparent: true, opacity: 0.07, roughness: 0.1, depthWrite: false });
-const MULLION = "#f4f1ea";
-const SLAB_COLOR = "#e4dccd";
-const FLOOR_COLOR = "#efe2cf";
+const GLASS = new THREE.MeshStandardMaterial({ color: "#cfeaf7", transparent: true, opacity: 0.06, roughness: 0.1, depthWrite: false });
+const FRAME = "#f6f1e8";
+const SLAB_COLOR = "#e2d9ca";
+const FLOOR_COLOR = "#f1e6d6";
 
 export function createTower(scene) {
   const root = new THREE.Group();
   scene.add(root);
-  buildCity(scene);
+  const city = buildCity();
+  scene.add(city);
 
   const lobby = buildLobby();
   root.add(lobby);
   const roof = buildRoof();
-  root.add(roof.group);
+  root.add(roof);
 
   const floors = new Map(); // projectId -> floor record
   let focused = null;
@@ -38,7 +37,6 @@ export function createTower(scene) {
       floors.delete(id);
     }
     projects.forEach((project, i) => {
-      const index = i + 1;
       const desks = deskCount(project);
       let f = floors.get(project.id);
       if (f && f.desks !== desks) {
@@ -50,11 +48,10 @@ export function createTower(scene) {
         floors.set(project.id, f);
         root.add(f.group);
       }
-      f.index = index;
-      f.project = project;
-      f.group.position.y = floorBaseY(index);
+      f.index = i + 1;
+      f.group.position.y = floorBaseY(i + 1);
     });
-    roof.group.position.y = floorBaseY(order.length + 1);
+    roof.position.y = floorBaseY(order.length + 1);
     setFocus(focused && floors.has(focused) ? focused : null);
   }
 
@@ -71,35 +68,29 @@ export function createTower(scene) {
     return [...floors.values()].filter((f) => f.group.visible).map((f) => f.group);
   }
 
-  // Floor mode shows a single floor (no lobby, roof or other floors); null shows the whole tower.
+  // Floor mode shows a single floor on a plain background; null shows the whole tower.
   function setFocus(projectId) {
     focused = projectId;
-    lobby.visible = roof.group.visible = !projectId;
+    lobby.visible = roof.visible = city.visible = !projectId;
     for (const [id, f] of floors) {
       f.group.visible = !projectId || id === projectId;
       f.setOpenTop(!!projectId);
     }
   }
 
-  // statusByProject: Map id -> "running" | "needsYou"
-  function update(t, { night, statusByProject }) {
-    for (const [id, f] of floors) f.setState(statusByProject.get(id) || "idle", night, t);
-    roof.update(t);
+  // statusByProject: Map id -> "running" | "needsYou"; busyDesks: Map id -> Set of desk indexes in use.
+  function update(t, { night, statusByProject, busyDesks }) {
+    for (const [id, f] of floors) f.setState(statusByProject.get(id) || "idle", busyDesks.get(id) || new Set(), night, t);
   }
 
   return { sync, floorIndexOf, roofIndex, floorObjects, setFocus, update, get count() { return order.length; } };
-}
-
-// Back walls: the project's accent softened with white, strong enough to tell floors apart.
-function wallColor(projectId) {
-  return new THREE.Color(accentColor(projectId)).lerp(new THREE.Color("#ffffff"), 0.45);
 }
 
 function accentColor(projectId) {
   return pick(COLORS.roof, hash(projectId) >>> 4);
 }
 
-// Shell shared by every storey: slab, inner floor, back and left walls, elevator core, glass.
+// Shell shared by every storey: slab, inner floor, back and left walls, elevator core, glass front.
 function buildShell(height, wallMaterial) {
   const g = new THREE.Group();
   const slab = box(W, SLAB, D, SLAB_COLOR);
@@ -111,70 +102,66 @@ function buildShell(height, wallMaterial) {
   back.position.set(0, SLAB + wallH / 2, -D / 2 + 0.1);
   const left = mesh(new THREE.BoxGeometry(0.2, wallH, D), wallMaterial);
   left.position.set(-W / 2 + 0.1, SLAB + wallH / 2, 0);
+  const right = mesh(new THREE.BoxGeometry(0.2, wallH, D), wallMaterial);
+  right.position.set(W / 2 - 0.1, SLAB + wallH / 2, 0);
   const e = FURNITURE.elevator;
-  const core = box(e.w, wallH, e.d, "#d9d4cc");
+  const core = box(e.w, wallH, e.d, "#dcd6cd");
   core.position.set(e.x, SLAB + wallH / 2, e.z);
-  const door = box(0.9, 1.9, 0.05, "#aeb7c2");
+  const door = box(0.9, 1.9, 0.05, "#b4bcc6");
   door.position.set(e.x, SLAB + 0.95, e.z + e.d / 2 + 0.03);
-  const doorLine = box(0.03, 1.9, 0.06, "#7f8995");
+  const doorLine = box(0.03, 1.9, 0.06, "#8a939e");
   doorLine.position.copy(door.position);
-  g.add(slab, inner, back, left, core, door, doorLine);
+  g.add(slab, inner, back, left, right, core, door, doorLine);
 
   const front = mesh(new THREE.BoxGeometry(W, wallH, 0.04), GLASS, { shadow: false, receive: false });
   front.position.set(0, SLAB + wallH / 2, D / 2);
-  const side = mesh(new THREE.BoxGeometry(0.04, wallH, D), GLASS, { shadow: false, receive: false });
-  side.position.set(W / 2, SLAB + wallH / 2, 0);
-  front.renderOrder = side.renderOrder = 2;
-  g.add(front, side);
-  for (let x = -W / 2; x <= W / 2 + 0.01; x += W / 6) {
-    const m = box(0.08, wallH, 0.08, MULLION);
-    m.position.set(x, SLAB + wallH / 2, D / 2);
-    g.add(m);
-  }
-  for (let z = -D / 2; z <= D / 2 + 0.01; z += D / 4) {
-    const m = box(0.08, wallH, 0.08, MULLION);
-    m.position.set(W / 2, SLAB + wallH / 2, z);
-    g.add(m);
+  front.renderOrder = 2;
+  g.add(front);
+  for (const x of [-W / 2 + 0.05, W / 2 - 0.05]) {
+    const post = box(0.12, wallH, 0.12, FRAME);
+    post.position.set(x, SLAB + wallH / 2, D / 2);
+    g.add(post);
   }
   return flat(g);
 }
 
 function buildFloor(project, desks) {
-  const wallMat = new THREE.MeshStandardMaterial({ color: wallColor(project.id), emissive: "#ffcf8a", emissiveIntensity: 0, flatShading: true, roughness: 0.9 });
+  const accent = new THREE.Color(accentColor(project.id));
+  const wallMat = new THREE.MeshStandardMaterial({ color: accent.clone().lerp(new THREE.Color("#ffffff"), 0.62), emissive: "#ffd9a0", emissiveIntensity: 0, flatShading: true, roughness: 0.9 });
   const g = buildShell(H, wallMat);
 
-  const rug = box(5.2, 0.02, 3.6, new THREE.Color(accentColor(project.id)).lerp(new THREE.Color(FLOOR_COLOR), 0.55).getStyle());
-  rug.position.set(1.1, SLAB + 0.03, 0.6);
-  g.add(flat(rug));
+  // A stripe in the project's colour along the back wall, so floors are easy to tell apart.
+  const stripe = box(W - 0.4, 0.14, 0.05, `#${accent.getHexString()}`);
+  stripe.position.set(0, SLAB + 0.9, -D / 2 + 0.23);
+  g.add(flat(stripe));
 
-  const screenMat = screenMaterial();
-  for (const d of DESKS.slice(0, desks)) {
-    const desk = buildDesk(screenMat);
+  const screens = DESKS.slice(0, desks).map((d) => {
+    const screen = screenMaterial();
+    const desk = buildDesk(screen);
     desk.position.set(d.x, SLAB, d.z);
     g.add(desk);
-  }
+    return screen;
+  });
   const ledMat = new THREE.MeshBasicMaterial({ color: "#7cf0b0" });
   const place = (object, { x, z }, rotation = 0) => {
     object.position.set(x, SLAB, z);
     object.rotation.y += rotation;
     g.add(object);
+    return object;
   };
   place(buildBookshelf(), FURNITURE.bookshelf);
-  place(buildWhiteboard(), FURNITURE.whiteboard);
-  place(buildServerRack(ledMat), FURNITURE.rack);
-  place(buildTelescope(), FURNITURE.telescope);
+  place(buildServerRack(ledMat), FURNITURE.rack, Math.PI);
   FURNITURE.plants.forEach((spot, i) => place(buildPlant(i + 1), spot));
-  if (desks >= 4 && desks < 6) place(buildSofa(accentColor(project.id)), { x: -2.4, z: 1.6 }, Math.PI / 2);
 
   const ceilingMat = new THREE.MeshStandardMaterial({ color: "#fff7e6", emissive: "#fff1d0", emissiveIntensity: 0 });
-  const ceiling = [-1.2, 2.2].map((x) => {
-    const panel = mesh(new THREE.BoxGeometry(2.4, 0.05, 1), ceilingMat, { shadow: false, receive: false });
-    panel.position.set(x, H - 0.04, 0.4);
+  const ceiling = [-0.3, 2.6].map((x) => {
+    const panel = mesh(new THREE.BoxGeometry(2.4, 0.05, 0.8), ceilingMat, { shadow: false, receive: false });
+    panel.position.set(x, H - 0.04, 0.5);
     g.add(panel);
     return panel;
   });
-  // Shade over idle floors, like an office with the lights off.
-  const dimMat = new THREE.MeshBasicMaterial({ color: "#26304d", transparent: true, opacity: 0, depthWrite: false });
+  // Light shade over idle floors, like an office with the lights off.
+  const dimMat = new THREE.MeshBasicMaterial({ color: "#2b3552", transparent: true, opacity: 0, depthWrite: false });
   const dim = new THREE.Mesh(new THREE.BoxGeometry(W - 0.3, H - SLAB - 0.04, D - 0.3), dimMat);
   dim.position.y = SLAB + (H - SLAB) / 2;
   dim.renderOrder = 1;
@@ -182,118 +169,86 @@ function buildFloor(project, desks) {
 
   g.traverse((o) => (o.userData.projectId = project.id));
 
-  function setState(status, night, t) {
+  function setState(status, busyDesks, night, t) {
     const on = status !== "idle";
-    wallMat.emissiveIntensity = on ? 0.18 + night * 0.3 : 0;
+    wallMat.emissiveIntensity = on ? 0.14 + night * 0.3 : 0;
     ceilingMat.emissiveIntensity = on ? 1 : 0.05;
-    screenMat.emissiveIntensity = on ? 0.9 : 0;
+    screens.forEach((s, i) => (s.emissiveIntensity = busyDesks.has(i) ? 1 : 0));
     ledMat.color.set(on && Math.floor(t * 3) % 2 ? "#7cf0b0" : "#3f8a66");
-    dimMat.opacity = on ? 0 : 0.34 + night * 0.3;
+    dimMat.opacity = on ? 0 : 0.16 + night * 0.4;
   }
+
   // Seen from above, the ceiling lights and the shade would hide the room.
   function setOpenTop(open) {
     for (const panel of ceiling) panel.visible = !open;
     dim.visible = !open;
   }
-  return { group: g, desks, setState, setOpenTop, index: 0, project };
+  return { group: g, desks, setState, setOpenTop, index: 0 };
 }
 
 function buildLobby() {
-  const wallMat = new THREE.MeshStandardMaterial({ color: "#f6efe4", flatShading: true, roughness: 0.9 });
+  const wallMat = new THREE.MeshStandardMaterial({ color: "#f3ece1", flatShading: true, roughness: 0.9 });
   const g = buildShell(LOBBY_H, wallMat);
   const reception = buildReception();
-  reception.position.set(1, SLAB, -1.4);
-  const sofa = buildSofa("#8fb8f2");
-  sofa.position.set(-2.2, SLAB, 1.6);
-  sofa.rotation.y = Math.PI / 2;
+  reception.position.set(1.4, SLAB, -1.6);
+  const sofa = buildSofa("#9fbbe0");
+  sofa.position.set(-1.6, SLAB, -2.4);
   const p1 = buildPlant(3);
   p1.position.set(4.4, SLAB, -2.6);
-  const p2 = buildPlant(4);
-  p2.position.set(-2.8, SLAB, -2.6);
-  const sign = box(3.6, 0.5, 0.1, "#2f3a4a");
-  sign.position.set(1, LOBBY_H - 0.5, D / 2 + 0.1);
-  const canopy = box(2.6, 0.12, 1.2, "#f4a28c");
-  canopy.position.set(1, 2.3, D / 2 + 0.6);
-  g.add(reception, sofa, p1, p2, flat(sign), flat(canopy));
+  const sign = box(3.2, 0.42, 0.08, "#2f3a4a");
+  sign.position.set(1.4, LOBBY_H - 0.45, D / 2 + 0.08);
+  g.add(reception, sofa, p1, flat(sign));
   return g;
 }
 
+// A quiet lounge on the roof where finished sessions rest.
 function buildRoof() {
   const g = new THREE.Group();
   const slab = box(W, SLAB, D, SLAB_COLOR);
   slab.position.y = SLAB / 2;
-  const deck = box(W - 1, 0.08, D - 1, "#d8b48c");
-  deck.position.y = SLAB + 0.04;
-  g.add(slab, deck);
-  for (let x = -W / 2 + 0.5; x < W / 2; x += 0.9) {
-    const plank = box(0.04, 0.09, D - 1, "#c49a6c");
-    plank.position.set(x, SLAB + 0.05, 0);
-    g.add(plank);
-  }
-  const rail = mesh(new THREE.BoxGeometry(W, 0.9, 0.04), GLASS, { shadow: false, receive: false });
-  rail.position.set(0, SLAB + 0.45, D / 2 - 0.05);
-  const railSide = mesh(new THREE.BoxGeometry(0.04, 0.9, D), GLASS, { shadow: false, receive: false });
-  railSide.position.set(W / 2 - 0.05, SLAB + 0.45, 0);
-  const handrail = box(W, 0.06, 0.08, MULLION);
-  handrail.position.set(0, SLAB + 0.92, D / 2 - 0.05);
-  const handrailSide = box(0.08, 0.06, D, MULLION);
-  handrailSide.position.set(W / 2 - 0.05, SLAB + 0.92, 0);
-  g.add(rail, railSide, handrail, handrailSide);
-
+  const deck = box(W - 0.6, 0.06, D - 0.6, "#dcc3a2");
+  deck.position.y = SLAB + 0.03;
+  const parapet = box(W, 0.5, 0.15, FRAME);
+  parapet.position.set(0, SLAB + 0.25, D / 2 - 0.08);
+  g.add(slab, deck, parapet);
   const bar = buildCoffeeBar();
-  bar.position.set(-2.6, SLAB, -2.3);
+  bar.scale.setScalar(0.8);
+  bar.position.set(-3.3, SLAB, -2.2);
   g.add(bar);
   for (const { x, z } of ROOF_CHAIRS) {
     const chair = buildDeckChair();
     chair.position.set(x, SLAB, z);
     g.add(chair);
   }
-  const umbrellaPole = box(0.06, 2.2, 0.06, "#fbf7f0");
-  umbrellaPole.position.set(1, SLAB + 1.1, 0.3);
-  const umbrella = mesh(new THREE.ConeGeometry(1.3, 0.5, 8), mat("#f29b8f"));
-  umbrella.position.set(1, SLAB + 2.3, 0.3);
-  g.add(umbrellaPole, umbrella);
-  for (const [x, z, s] of [[-4.3, 2.6, 5], [4.4, 2.6, 6], [-1.2, 2.7, 7]]) {
-    const plant = buildPlant(s);
-    plant.position.set(x, SLAB, z);
-    g.add(plant);
-  }
-  const crane = buildCrane();
-  crane.group.position.set(3.6, SLAB, -2.2);
-  g.add(crane.group);
-  return { group: g, update: crane.update };
+  const plant = buildPlant(5);
+  plant.position.set(4.4, SLAB, -2.2);
+  g.add(plant);
+  return flat(g);
 }
 
-// Ground, street, trees and a skyline behind the tower (the camera looks from the front-right).
-function buildCity(scene) {
-  const ground = box(220, 0.2, 220, "#cfe3c4");
-  ground.position.y = -0.1;
-  const plaza = box(W + 6, 0.12, D + 7, "#ece5d8");
-  plaza.position.set(0, 0.0, 1);
-  const road = box(220, 0.14, 6, "#b9bfc7");
-  road.position.set(0, 0.0, D / 2 + 8);
-  scene.add(ground, plaza, road);
-  for (let i = -6; i <= 6; i++) {
-    const stripe = box(2, 0.15, 0.25, "#f4f1ea");
-    stripe.position.set(i * 6, 0.01, D / 2 + 8);
-    scene.add(stripe);
+// Plain ground and a few low, pale blocks far behind: context without stealing attention.
+function buildCity() {
+  const g = new THREE.Group();
+  const ground = box(400, 0.2, 200, "#d9e6cf");
+  ground.position.set(0, -0.1, -40);
+  const sidewalk = box(W + 8, 0.1, D + 6, "#ece5d8");
+  sidewalk.position.y = 0.0;
+  g.add(ground, sidewalk);
+  for (const x of [-7.5, 7.5]) {
+    const trunk = box(0.25, 1, 0.25, COLORS.trunk);
+    trunk.position.set(x, 0.5, 2);
+    const crown = mesh(new THREE.IcosahedronGeometry(0.9, 0), mat(COLORS.leaf));
+    crown.position.set(x, 1.6, 2);
+    g.add(trunk, crown);
   }
-  const trees = [[-10, 6], [10, 7], [-11, -3], [11, -2], [-6, 9], [7, 9.5]];
-  for (const [x, z] of trees) {
-    const trunk = box(0.3, 1.2, 0.3, COLORS.trunk);
-    trunk.position.set(x, 0.6, z);
-    const crown = mesh(new THREE.IcosahedronGeometry(1.1, 0), mat(COLORS.leaf));
-    crown.position.set(x, 1.9, z);
-    scene.add(trunk, crown);
-  }
-  const palette = ["#d8cfe8", "#cfe0ee", "#ead7cf", "#d6e7dc", "#e8e0cc"];
-  for (let i = 0; i < 26; i++) {
+  const palette = ["#e4ddec", "#dfe8ef", "#ede2db", "#e1ebe3"];
+  for (let i = 0; i < 14; i++) {
     const h = hash(`block${i}`);
-    const angle = Math.PI * 0.95 + (i / 26) * Math.PI * 1.1 + ((h % 100) / 100) * 0.1;
-    const radius = 28 + (h % 30);
-    const block = buildSkylineBlock(4 + (h % 5), 6 + ((h >>> 5) % 26), 4 + ((h >>> 9) % 4), palette[i % palette.length]);
-    block.group.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
-    block.group.lookAt(0, 0, 0);
-    scene.add(block.group);
+    const width = 5 + (h % 5);
+    const height = 4 + ((h >>> 5) % 9);
+    const block = box(width, height, 4, palette[i % palette.length]);
+    block.position.set(-60 + i * 9 + ((h >>> 9) % 4), height / 2, -30 - ((h >>> 12) % 10));
+    g.add(block);
   }
+  return flat(g);
 }

@@ -2,8 +2,8 @@
 // Text from hooks (commands, file names) is always set with textContent.
 import * as THREE from "three";
 import { iconForEntity } from "./icons.js";
-import { hours, compact, freshTokens } from "./format.js";
-import { TOWER, floorBaseY } from "../scene/towerLayout.js";
+import { hours, compact, freshTokens, ago } from "./format.js";
+import { TOWER, DESKS, floorBaseY, floorTopY } from "../scene/towerLayout.js";
 
 const HEAD_OFFSET = 1.45; // above the head, in person units (scaled with the model)
 const STATUS_TEXT = { running: "Running", needsYou: "Needs you", idle: "Idle" };
@@ -11,6 +11,7 @@ const STATUS_TEXT = { running: "Running", needsYou: "Needs you", idle: "Idle" };
 export function createOverlay(layer, camera, canvas, onSelect, onSelectProject) {
   const bubbles = new Map();
   const plaques = new Map();
+  const deskTags = [];
   const v = new THREE.Vector3();
 
   function toScreen(world) {
@@ -38,16 +39,17 @@ export function createOverlay(layer, camera, canvas, onSelect, onSelectProject) 
       const el = document.createElement("button");
       el.type = "button";
       el.className = "plaque";
-      el.innerHTML = '<span class="tag-line"><span class="tag-dot"></span><span class="plaque-floor"></span><span class="tag-name"></span></span><span class="tag-stats"></span>';
+      el.innerHTML = '<span class="tag-line"><span class="tag-dot"></span><span class="plaque-floor"></span><span class="tag-name"></span></span><span class="plaque-activity"></span><span class="tag-stats"></span>';
       el.addEventListener("click", () => onSelectProject(projectId));
       layer.appendChild(el);
-      plaques.set(projectId, { el, floor: el.querySelector(".plaque-floor"), name: el.querySelector(".tag-name"), stats: el.querySelector(".tag-stats"), key: "" });
+      plaques.set(projectId, { el, floor: el.querySelector(".plaque-floor"), name: el.querySelector(".tag-name"), activity: el.querySelector(".plaque-activity"), stats: el.querySelector(".tag-stats"), key: "" });
     }
     return plaques.get(projectId);
   }
 
-  // floors: [{ project, index }]; projectStatus: Map projectId -> "running" | "needsYou".
-  function update(entities, floors, selectedId, projectStatus, selectedProjectId) {
+  // floors: [{ project, index }]; info: Map projectId -> { status, activity };
+  // focus: { index, desks: [{ title, meta, status }] } in floor mode, else null.
+  function update(entities, floors, selectedId, info, selectedProjectId, focus) {
     const seen = new Set();
     for (const e of entities) {
       const b = bubbleFor(e.key);
@@ -87,13 +89,16 @@ export function createOverlay(layer, camera, canvas, onSelect, onSelectProject) 
     for (const { project, index } of floors) {
       const plaque = plaqueFor(project.id);
       seenPlaques.add(project.id);
-      const status = projectStatus.get(project.id) || "idle";
+      const { status = "idle", activity = "" } = info.get(project.id) || {};
       const stats = project.stats || {};
-      const statsText = `${hours(stats.activeMs || 0)} · ${compact(freshTokens(stats.tokens))} tokens`;
-      const key = `${index}|${project.name}|${status}|${statsText}`;
+      const chats = project.chatCount || 0;
+      const statsText = `${hours(stats.activeMs || 0)} · ${compact(freshTokens(stats.tokens))} tokens · ${chats} chat${chats === 1 ? "" : "s"}`;
+      const activityText = status === "idle" ? `Idle · ${ago(Date.now() - (project.lastActiveAt || 0))} ago` : activity;
+      const key = `${index}|${project.name}|${status}|${statsText}|${activityText}`;
       if (plaque.key !== key) {
         plaque.floor.textContent = String(index);
         plaque.name.textContent = project.name;
+        plaque.activity.textContent = activityText;
         plaque.stats.textContent = statsText;
         plaque.el.dataset.status = status;
         plaque.el.title = `Floor ${index} · ${project.name}: ${STATUS_TEXT[status]}`;
@@ -111,6 +116,29 @@ export function createOverlay(layer, camera, canvas, onSelect, onSelectProject) 
       plaque.el.remove();
       plaques.delete(id);
     }
+    updateDeskTags(focus);
+  }
+
+  // Floor mode: a name tag on every desk with its chat's title and state.
+  function updateDeskTags(focus) {
+    const desks = focus ? focus.desks : [];
+    while (deskTags.length < desks.length) {
+      const el = document.createElement("div");
+      el.className = "desk-tag";
+      el.innerHTML = '<span class="tag-line"><span class="tag-dot"></span><span class="tag-name"></span></span><span class="tag-stats"></span>';
+      layer.appendChild(el);
+      deskTags.push({ el, name: el.querySelector(".tag-name"), meta: el.querySelector(".tag-stats") });
+    }
+    deskTags.forEach((tag, i) => {
+      const desk = desks[i];
+      tag.el.hidden = !desk;
+      if (!desk) return;
+      tag.name.textContent = desk.title;
+      tag.meta.textContent = desk.meta;
+      tag.el.dataset.status = desk.status;
+      const p = toScreen(new THREE.Vector3(DESKS[i].x, floorTopY(focus.index) + 0.9, DESKS[i].z + 0.55));
+      tag.el.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, 0)`;
+    });
   }
 
   return { update };

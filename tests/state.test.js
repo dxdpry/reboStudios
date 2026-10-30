@@ -74,23 +74,25 @@ test("ended sessions leave after a while, stale ones are dropped", () => {
   assert.deepEqual(Object.keys(s.sessions), ["s2"]);
   prune(s, 3 * 60 * 60 * 1000);
   assert.deepEqual(Object.keys(s.sessions), []);
-  assert.equal(Object.keys(s.projects).length, 1, "projects (buildings) stay");
+  assert.equal(Object.keys(s.projects).length, 2, "projects stay after their sessions leave");
 });
 
-test("a session moves to the project of the files it writes", () => {
+test("a session's project is its chat title; the folder follows what it writes", () => {
   const s = createState();
   const resolve = {
     projectForCwd: () => ({ id: "c:/home/notes", name: "notes", cwd: "C:/home/notes" }),
     projectForFile: (f) => (f && f.includes("game") ? { id: "c:/work/game", name: "game", cwd: "C:/work/game" } : null),
   };
   applyEvent(s, ev("UserPromptSubmit"), 0, resolve);
-  assert.equal(s.sessions.s1.projectId, "c:/home/notes");
-  applyEvent(s, ev("PreToolUse", { tool_name: "Read", tool_input: { file_path: "C:/work/game/a.lua" } }), 1, resolve);
-  assert.equal(s.sessions.s1.projectId, "c:/home/notes", "reading does not move it");
+  assert.equal(s.sessions.s1.projectId, "c:s1", "untitled chats stand alone");
+  applyEvent(s, ev("UserPromptSubmit", { session_title: "Mini Discord para amigos" }), 1, resolve);
+  assert.equal(s.sessions.s1.projectId, "t:mini discord para amigos");
+  assert.equal(s.sessions.s1.folder.name, "notes");
   applyEvent(s, ev("PreToolUse", { tool_name: "Edit", tool_input: { file_path: "C:/work/game/a.lua" } }), 2, resolve);
-  assert.equal(s.sessions.s1.projectId, "c:/work/game");
-  applyEvent(s, ev("Stop"), 3, resolve);
-  assert.equal(s.sessions.s1.projectId, "c:/work/game", "and stays there");
+  assert.equal(s.sessions.s1.folder.name, "game");
+  assert.equal(s.sessions.s1.projectId, "t:mini discord para amigos", "writing elsewhere keeps the project");
+  applyEvent(s, { ...ev("UserPromptSubmit", { session_title: "mini  discord PARA amigos" }), session_id: "s2" }, 3, resolve);
+  assert.equal(s.sessions.s2.projectId, s.sessions.s1.projectId, "same title, any case = same project");
 });
 
 test("public projects merge live state with transcript history", () => {
