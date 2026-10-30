@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Island</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="bar">
+    <h1>Agent Island</h1>
+    <div class="counts" id="counts"></div>
+    <span class="conn" id="conn" title="Connection to the local server"></span>
+    <button class="alerts" id="alerts" type="button">Enable alerts</button>
+  </header>
+  <main>
+    <section class="stage"><canvas id="world"></canvas></section>
+    <aside>
+      <section id="needs" class="needs" hidden></section>
+      <section id="sessions" class="sessions"></section>
+    </aside>
+  </main>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "agent-island",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pixel-art island that shows Claude Code sessions live",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test tests/state.test.js",
+    "simulate": "node scripts/simulate.js",
+    "hooks:install": "node scripts/hooks-config.js install",
+    "hooks:uninstall": "node scripts/hooks-config.js uninstall"
+  }
+}
