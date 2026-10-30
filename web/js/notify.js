@@ -1,5 +1,7 @@
 // Sound and system notifications: a bell when a colonist raises the flag, a soft chime when one finishes.
 // Browsers only allow audio and notifications after a click, hence the "Enable alerts" button.
+import { ICONS } from "./ui/icons.js";
+
 const STORAGE_KEY = "agentIsland.alerts";
 
 export function createAlerts(button) {
@@ -36,7 +38,9 @@ export function createAlerts(button) {
   }
 
   function paint() {
-    button.textContent = enabled ? "Alerts on" : "Enable alerts";
+    button.innerHTML = enabled ? ICONS.bell : ICONS.bellOff;
+    button.title = enabled ? "Alerts on (sound and notifications)" : "Enable alerts";
+    button.setAttribute("aria-label", button.title);
     button.classList.toggle("on", enabled);
   }
 

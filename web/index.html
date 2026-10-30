@@ -2,27 +2,45 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Agent Island</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/addons/" } }
+  </script>
 </head>
 <body>
-  <header class="bar">
-    <h1>Agent Island</h1>
-    <div class="counts" id="counts"></div>
+  <div id="stage" class="stage"></div>
+  <div id="overlay" class="overlay"></div>
+
+  <div class="brand">
+    <span class="brand-mark"></span>
+    <span class="brand-name">Agent Island</span>
     <span class="conn" id="conn" title="Connection to the local server"></span>
-    <button class="alerts" id="alerts" type="button">Enable alerts</button>
-  </header>
-  <main>
-    <section class="stage"><canvas id="world"></canvas></section>
-    <aside>
-      <section id="needs" class="needs" hidden></section>
-      <section id="sessions" class="sessions"></section>
-    </aside>
-  </main>
+  </div>
+
+  <nav class="counts glass" id="counts" aria-label="Colonist status"></nav>
+
+  <section class="alerts" id="alerts" aria-live="polite"></section>
+
+  <aside class="sessions glass" id="sessions">
+    <button class="panel-head" id="sessions-toggle" type="button">
+      <span class="panel-icon"></span>
+      <span class="panel-title">Colonists</span>
+      <span class="panel-count">0</span>
+      <span class="panel-chevron"></span>
+    </button>
+    <div class="panel-body" id="sessions-body"></div>
+  </aside>
+
+  <div class="tools glass">
+    <button class="tool" id="alerts-toggle" type="button"></button>
+    <button class="tool" id="recenter" type="button" title="Recenter the island" aria-label="Recenter the island"></button>
+  </div>
+
   <script type="module" src="js/main.js"></script>
 </body>
 </html>
