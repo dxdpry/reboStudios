@@ -10,6 +10,18 @@ const CLAUDE = process.env.REBO_CLAUDE || "claude";
 const MESSAGE_MAX = 8000;
 const ERROR_MAX = 400;
 
+// When the server itself was started from inside a Claude session (the desktop app, a terminal
+// running claude), it inherits that session's variables, which make a child claude try the host's
+// login instead of its own. The manager runs as a plain claude with the user's own login.
+function cleanEnv(env) {
+  const out = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (/^(CLAUDECODE|CLAUDE_CODE_|CLAUDE_AGENT_SDK|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_PREVIEW|ANTHROPIC_BASE_URL)/.test(key)) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 function managerPrompt(maxAgents) {
   const agents =
     maxAgents === 1
@@ -47,7 +59,7 @@ function createManager({ workspace, control, onChange, onSession, command = CLAU
 
     let child;
     try {
-      child = spawn(command, [...prefixArgs, ...args], { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+      child = spawn(command, [...prefixArgs, ...args], { cwd, env: cleanEnv(process.env), windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     } catch (err) {
       return { ok: false, error: `Could not start Claude Code: ${err.message}` };
     }
