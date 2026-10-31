@@ -11,7 +11,8 @@ const NAME_MAX = 40;
 const CATEGORY_MAX = 30;
 const OTHER = { id: "other", name: "Other" };
 const MAX_AGENTS = 6;
-const DEFAULT_TEAM = { maxAgents: 3, cwd: null, permissionMode: "bypassPermissions", sessionId: null };
+const DEFAULT_TEAM = { maxAgents: 3, cwd: null, permissionMode: "bypassPermissions", workflow: "plan-build-review", sessionId: null, startFresh: false };
+const WORKFLOWS = new Set(["plan-build-review", "plan-build", "direct"]);
 const PERMISSION_MODES = new Set(["bypassPermissions", "acceptEdits", "default", "plan"]);
 
 function createWorkspace(file) {
@@ -76,6 +77,15 @@ function createWorkspace(file) {
           if (!PERMISSION_MODES.has(action.permissionMode)) return false;
           team.permissionMode = action.permissionMode;
         }
+        if (action.workflow !== undefined) {
+          if (!WORKFLOWS.has(action.workflow)) return false;
+          team.workflow = action.workflow;
+        }
+        // A new manager chat: the next task starts without history (no resume, no fork).
+        if (action.newChat === true) {
+          team.sessionId = null;
+          team.startFresh = true;
+        }
         if (action.cwd !== undefined) {
           if (!isDirectory(action.cwd)) return false;
           team.cwd = path.resolve(action.cwd);
@@ -102,7 +112,7 @@ function createWorkspace(file) {
 
   // Set by the server, not by page actions: the manager's chat once its first run started.
   function setManagerSession(projectId, sessionId) {
-    data.teams[projectId] = { ...teamOf(projectId), sessionId };
+    data.teams[projectId] = { ...teamOf(projectId), sessionId, startFresh: false };
     save();
   }
 

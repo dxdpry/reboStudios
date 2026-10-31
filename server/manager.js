@@ -5,6 +5,7 @@
 // at the floor's desks through the usual hook events.
 const { spawn, execFile } = require("child_process");
 const fs = require("fs");
+const { buildArgs } = require("./workflow");
 
 const CLAUDE = process.env.REBO_CLAUDE || "claude";
 const MESSAGE_MAX = 8000;
@@ -20,18 +21,6 @@ function cleanEnv(env) {
     out[key] = value;
   }
   return out;
-}
-
-function managerPrompt(maxAgents) {
-  const agents =
-    maxAgents === 1
-      ? "Do the work yourself, or with at most one subagent at a time."
-      : `When a task has independent parts, delegate them to subagents (Agent tool), with at most ${maxAgents} subagents running at the same time. Do small tasks yourself.`;
-  return [
-    "You are the manager of this project inside Rebo Studios, the user's dashboard that shows their projects as an office.",
-    "The user sends you tasks from there. Plan each task, do it, and report back briefly in the user's language.",
-    agents,
-  ].join(" ");
 }
 
 // command/prefixArgs let tests run a stand-in for the claude binary.
@@ -52,10 +41,8 @@ function createManager({ workspace, control, onChange, onSession, command = CLAU
     const cwd = team.cwd || (project.folderPaths || []).find(isDirectory);
     if (!cwd) return { ok: false, error: "Pick the project's folder in the manager settings first" };
 
-    const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", team.permissionMode, "--append-system-prompt", managerPrompt(team.maxAgents), "-n", project.name];
     const latestChat = (project.chats || [])[0];
-    if (team.sessionId) args.push("--resume", team.sessionId);
-    else if (latestChat) args.push("--resume", latestChat.id, "--fork-session");
+    const args = buildArgs(project, team, latestChat);
 
     let child;
     try {
@@ -63,7 +50,7 @@ function createManager({ workspace, control, onChange, onSession, command = CLAU
     } catch (err) {
       return { ok: false, error: `Could not start Claude Code: ${err.message}` };
     }
-    const run = { child, sessionId: team.sessionId, startedAt: Date.now(), output: "", forked: !team.sessionId && !!latestChat };
+    const run = { child, sessionId: team.sessionId, startedAt: Date.now(), output: "", forked: !team.sessionId && !team.startFresh && !!latestChat };
     runs.set(project.id, run);
     lastResult.delete(project.id);
     child.stdin.end(message);
@@ -144,4 +131,4 @@ function isDirectory(dir) {
   }
 }
 
-module.exports = { createManager, managerPrompt };
+module.exports = { createManager };

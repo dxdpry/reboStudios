@@ -175,7 +175,7 @@ function focusInfo() {
     const s = e.session;
     const status = s.status === "needsYou" ? "needsYou" : "running";
     desks[e.desk] = e.helper
-      ? { target: targetForSession(s), title: helperName(e.helper), meta: e.helper.activity, status: "running" }
+      ? { target: targetForSession(s), title: helperName(e.helper), meta: e.helper.activity, status: "running", role: ROLE_NAMES[e.helper.type] ? e.helper.type : "" }
       : { target: targetForSession(s), title: s.title || "Chat", meta: s.status === "needsYou" ? (s.needsYou && s.needsYou.detail) || s.activity : s.activity, status };
   }
   const run = (state.managers || {})[project.id];
@@ -184,13 +184,22 @@ function focusInfo() {
   return {
     index: tower.floorIndexOf(project.id),
     desks,
-    manager: { target: { kind: "manager", projectId: project.id, title: project.name }, title: "Manager", meta: managerStatus === "idle" ? "Click to give a task" : (managerSession && managerSession.activity) || "Working…", status: managerStatus },
+    manager: { target: { kind: "manager", projectId: project.id, title: project.name }, title: "Manager", meta: managerMeta(managerStatus, managerSession), status: managerStatus },
     shelf: { target: { kind: "skills", projectId: project.id, name: project.name }, title: "Skills", meta: "Knowledge for the agents" },
   };
 }
 
+// Its own turn can end while its agents still work; the run is what counts.
+function managerMeta(status, session) {
+  if (status === "idle") return "Click to give a task";
+  if (!session) return "Starting…";
+  return session.status === "done" || session.status === "idle" ? "Waiting for its agents" : session.activity;
+}
+
+const ROLE_NAMES = { planner: "Planner", builder: "Builder", reviewer: "Reviewer" };
 function helperName(helper) {
   const type = String(helper.type || "agent");
+  if (ROLE_NAMES[type]) return ROLE_NAMES[type];
   return type === "general-purpose" || type === "helper" ? "Agent" : type.replace(/[-_]/g, " ");
 }
 

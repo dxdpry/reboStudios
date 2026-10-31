@@ -163,16 +163,16 @@ function handleManagerRead(url, req, res) {
   if (!project) return json(res, 404, { error: "no such project" });
   const team = workspace.teamOf(project.id);
   const status = manager.statusOf(project.id);
-  const chatId = status.sessionId || (project.chats[0] && project.chats[0].id) || null;
+  const chatId = status.sessionId || (!team.startFresh && project.chats[0] && project.chats[0].id) || null;
   const session = chatId && state.sessions[chatId];
   const file = chatId && ((session && session.transcriptPath) || history.fileFor(chatId));
   json(res, 200, {
     projectId: project.id,
-    historyFrom: status.sessionId ? "manager" : chatId ? "latest" : null,
+    historyFrom: status.sessionId ? "manager" : team.startFresh ? null : chatId ? "latest" : null,
     items: readChat(file),
     pending: chatId ? control.pending(chatId) : { messages: [], stop: false },
     status,
-    team: { maxAgents: team.maxAgents, permissionMode: team.permissionMode, cwd: folderOf(project) },
+    team: { maxAgents: team.maxAgents, permissionMode: team.permissionMode, workflow: team.workflow, cwd: folderOf(project) },
     folders: project.folderPaths || [],
   });
 }

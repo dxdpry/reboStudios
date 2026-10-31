@@ -151,6 +151,7 @@ export function createOverlay(layer, camera, canvas, onSelect, onSelectProject, 
       tag.el.disabled = !data.target;
       tag.el.dataset.kind = item.kind;
       tag.el.dataset.status = data.status || "idle";
+      tag.el.dataset.role = data.role || "";
       if (tag.iconKey !== item.icon) {
         tag.icon.innerHTML = ICONS[item.icon];
         tag.iconKey = item.icon;

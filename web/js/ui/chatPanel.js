@@ -11,6 +11,14 @@ import { createRequestBox, button, el } from "./requestBox.js";
 
 const POLL_MS = 2500;
 const AGENTS_MAX = 6;
+const WORKFLOWS = [
+  ["plan-build-review", "Plan → Build → Review"],
+  ["plan-build", "Plan → Build"],
+  ["direct", "Direct (no stages)"],
+];
+const STAGES = { "plan-build-review": ["plan", "build", "review"], "plan-build": ["plan", "build"], direct: [] };
+const STAGE_LABEL = { plan: "Plan", build: "Build", review: "Review" };
+const STAGE_OF_ROLE = { planner: "plan", builder: "build", reviewer: "review" };
 const MODES = [
   ["bypassPermissions", "Full access (no prompts)"],
   ["acceptEdits", "Edit files, ask for commands"],
@@ -27,6 +35,7 @@ export function createChatPanel(root, { sessionFor, permissionFor, managerFor, o
       <button class="card-close" type="button" aria-label="Close">${ICONS.close}</button>
     </header>
     <div class="chat-settings" hidden></div>
+    <ol class="chat-stages" hidden></ol>
     <p class="chat-note" hidden></p>
     <ol class="chat-log" aria-live="polite"></ol>
     <p class="chat-error" hidden></p>
@@ -70,6 +79,7 @@ export function createChatPanel(root, { sessionFor, permissionFor, managerFor, o
   let timer = null;
   let lastKey = "";
   let sendError = "";
+  let stage = null; // the furthest stage seen in the current run
 
   const isManager = () => current && current.kind === "manager";
   const keyOf = (c) => (c.kind === "manager" ? `m:${c.projectId}` : `c:${c.id}`);
@@ -82,6 +92,7 @@ export function createChatPanel(root, { sessionFor, permissionFor, managerFor, o
     data = null;
     lastKey = "";
     sendError = "";
+    stage = null;
     requestBox.reset();
     log.replaceChildren();
     settings.hidden = true;
@@ -185,9 +196,36 @@ export function createChatPanel(root, { sessionFor, permissionFor, managerFor, o
     errorLine.hidden = !error || (isManager() && status === "running");
     errorLine.textContent = error === "Stopped" ? "Stopped." : error;
 
+    renderStages(status);
     const id = sessionId();
     requestBox.render(id ? permissionFor(id) : null);
     renderPending((data && data.pending) || { messages: [], stop: false });
+  }
+
+  // Plan → Build → Review, lit up to the stage the run has reached (from its agents' roles).
+  function renderStages(status) {
+    const bar = q(".chat-stages");
+    const stages = isManager() && data && data.team ? STAGES[data.team.workflow] || [] : [];
+    bar.hidden = !stages.length;
+    if (!stages.length) return;
+    const live = managerFor(current.projectId) || {};
+    const s = live.sessionId && sessionFor(live.sessionId);
+    if (!live.running) stage = null;
+    for (const h of (s && s.helpers) || []) {
+      // Planner and reviewer mark their stages; any other agent (builder, Explore…) is building.
+      const reached = STAGE_OF_ROLE[h.type] || "build";
+      if (reached && (!stage || stages.indexOf(reached) > stages.indexOf(stage))) stage = reached;
+    }
+    const at = stage ? stages.indexOf(stage) : -1;
+    const key = `${stages.join()}|${at}|${status}`;
+    if (bar.dataset.key === key) return;
+    bar.dataset.key = key;
+    bar.replaceChildren(
+      ...stages.map((name, i) => {
+        const li = el("li", `chat-stage${i < at ? " done" : i === at ? " now" : ""}`, STAGE_LABEL[name]);
+        return li;
+      })
+    );
   }
 
   function managerStatus() {
@@ -201,7 +239,8 @@ export function createChatPanel(root, { sessionFor, permissionFor, managerFor, o
       return { status: "running", text: `${activity}${agents}`, hint: "Working. A new message reaches it after its current step.", canStop: true };
     }
     const last = live.lastResult;
-    return { status: "idle", text: last ? `Ready · last task ${ago(Date.now() - last.at)} ago` : "Ready for a task", hint: "Enter sends · Shift+Enter new line", canStop: false };
+    const cost = last && last.costUsd ? ` · cost $${last.costUsd.toFixed(2)}` : "";
+    return { status: "idle", text: last ? `Ready · last task ${ago(Date.now() - last.at)} ago${cost}` : "Ready for a task", hint: "Enter sends · Shift+Enter new line", canStop: false };
   }
 
   function chatStatus() {
@@ -268,7 +307,25 @@ export function createChatPanel(root, { sessionFor, permissionFor, managerFor, o
     modeSelect.onchange = () => change({ permissionMode: modeSelect.value });
     mode.append(el("span", "set-label", "Permissions"), modeSelect);
 
-    settings.replaceChildren(agents, folder, mode);
+    const flow = el("div", "set-row");
+    const flowSelect = el("select", "set-select");
+    for (const [value, label] of WORKFLOWS) {
+      const o = el("option", "", label);
+      o.value = value;
+      o.selected = value === team.workflow;
+      flowSelect.append(o);
+    }
+    flowSelect.onchange = () => change({ workflow: flowSelect.value });
+    flow.append(el("span", "set-label", "Workflow"), flowSelect);
+
+    // Long histories make every task cost more: start the manager over without them.
+    const fresh = el("div", "set-row");
+    const restart = button("set-link", "New manager chat", () => {
+      if (window.confirm("Start a new manager chat? The next task begins without the current history (it stays in Claude).")) change({ newChat: true });
+    });
+    fresh.append(el("span", "set-label", "History"), el("span", "set-hint", data.historyFrom === "manager" ? "Continues its chat" : "Starts fresh"), restart);
+
+    settings.replaceChildren(flow, agents, folder, mode, fresh);
   }
 
   async function sendMessage() {
