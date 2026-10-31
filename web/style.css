@@ -744,3 +744,28 @@ body.chat-open .sessions, body.chat-open .alerts { display: none; }
   .chat-panel { top: 56px; left: 0; right: 0; bottom: 0; width: auto; border-radius: var(--radius) var(--radius) 0 0; }
   body.chat-open .directory, body.chat-open .project-card, body.chat-open .back, body.chat-open .tools { display: none; }
 }
+
+/* Permission request / question inside the chat panel */
+.chat-request { margin: 0 14px 8px; padding: 10px 12px; border-radius: 12px; background: var(--red-soft); box-shadow: inset 0 0 0 1.5px var(--red); max-height: 55%; overflow-y: auto; flex: none; }
+.chat-request[hidden] { display: none; }
+.chat-req-title { margin: 0 0 6px; font-size: 12px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; color: var(--red); }
+.chat-req-label { margin: 0 0 6px; font-size: 13.5px; font-weight: 600; }
+.chat-req-detail { display: block; margin-bottom: 8px; padding: 7px 9px; border-radius: 8px; font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--glass-strong); }
+.chat-req-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.chat-req-allow, .chat-req-deny, .chat-req-secondary { padding: 6px 12px; border-radius: 9px; font-size: 13px; font-weight: 600; }
+.chat-req-allow { color: #fff; background: var(--green); }
+.chat-req-allow:disabled { opacity: 0.45; cursor: default; }
+.chat-req-deny { color: var(--red); background: var(--glass-strong); }
+.chat-req-secondary { margin-right: auto; font-weight: 500; color: var(--ink-soft); }
+.chat-req-secondary:hover { color: var(--ink); text-decoration: underline; }
+.chat-q + .chat-q { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--glass-border); }
+.chat-q-header { font-size: 11px; font-weight: 600; color: var(--ink-faint); }
+.chat-q-text { margin: 2px 0 7px; font-size: 13.5px; font-weight: 600; line-height: 1.35; }
+.chat-q-options { display: flex; flex-direction: column; gap: 5px; }
+.chat-q-option { display: flex; flex-direction: column; gap: 1px; padding: 7px 10px; border-radius: 9px; text-align: left; background: var(--glass-strong); box-shadow: inset 0 0 0 1px var(--glass-border); }
+.chat-q-option:hover { box-shadow: inset 0 0 0 1.5px var(--blue); }
+.chat-q-option.on { box-shadow: inset 0 0 0 2px var(--blue); background: var(--blue-soft); }
+.chat-q-label { font-size: 13px; font-weight: 600; }
+.chat-q-desc { font-size: 11.5px; color: var(--ink-soft); line-height: 1.35; }
+.chat-q-other { width: 100%; margin-top: 6px; padding: 7px 10px; border: 1px solid var(--glass-border); border-radius: 9px; outline: 0; font: inherit; font-size: 12.5px; color: var(--ink); background: var(--glass-strong); }
+.chat-q-other:focus { box-shadow: 0 0 0 2px var(--blue); }

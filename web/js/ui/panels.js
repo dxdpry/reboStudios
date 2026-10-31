@@ -7,7 +7,7 @@ const STATUS_LABEL = { needsYou: "Needs you", working: "Working", thinking: "Thi
 const STATUS_ORDER = { needsYou: 0, working: 1, thinking: 2, idle: 3, done: 4 };
 const REASON_LABEL = { permission: "Wants permission", question: "Has a question" };
 
-export function createPanels({ counts, alerts, sessions, sessionsBody, sessionsToggle, onSelect, colorOf }) {
+export function createPanels({ counts, alerts, sessions, sessionsBody, sessionsToggle, onSelect, onOpenChat, colorOf }) {
   sessionsToggle.addEventListener("click", () => sessions.classList.toggle("collapsed"));
   // Phones start with the list folded so the island stays visible.
   if (window.matchMedia("(max-width: 760px)").matches) sessions.classList.add("collapsed");
@@ -70,9 +70,12 @@ export function createPanels({ counts, alerts, sessions, sessionsBody, sessionsT
     head.append(icon, project, reason);
     const detail = el("code", "alert-detail");
     const time = el("span", "alert-time");
-    const show = el("button", "alert-show", "Show");
+    const show = el("button", "alert-show", "Answer");
     show.type = "button";
-    show.onclick = () => onSelect(id, true);
+    show.onclick = () => {
+      onSelect(id, true);
+      onOpenChat(id);
+    };
     const foot = el("footer", "alert-foot");
     foot.append(time, show);
     root.append(head, detail, foot);
@@ -113,7 +116,10 @@ export function createPanels({ counts, alerts, sessions, sessionsBody, sessionsT
     side.append(el("span", `pill ${s.status}`, STATUS_LABEL[s.status] || s.status), el("span", "row-time", ago(now - s.since)));
     if (s.helpers?.length) side.append(el("span", "row-helpers", `+${s.helpers.length} helper${s.helpers.length > 1 ? "s" : ""}`));
     item.append(main, side);
-    item.onclick = () => onSelect(s.id, true);
+    item.onclick = () => {
+      onSelect(s.id, true);
+      onOpenChat(s.id);
+    };
     return item;
   }
 

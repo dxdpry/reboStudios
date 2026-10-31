@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node --test tests/state.test.js tests/chat.test.js",
+    "test": "node --test --test-force-exit tests/state.test.js tests/chat.test.js tests/permissions.test.js",
     "simulate": "node scripts/simulate.js",
     "hooks:install": "node scripts/hooks-config.js install",
     "hooks:uninstall": "node scripts/hooks-config.js uninstall"

@@ -52,6 +52,8 @@ function labelForTool(name = "", input = {}) {
       return clip(`Searching the web: ${input.query || ""}`);
     case "WebFetch":
       return clip(`Reading ${host(input.url)}`);
+    case "AskUserQuestion":
+      return "Asking you a question";
     case "Agent":
     case "Task":
       return clip(`Calling ${input.subagent_type || "a helper"}`);

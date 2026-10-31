@@ -5,8 +5,9 @@
 const http = require("http");
 
 const PORT = Number(process.env.AGENT_ISLAND_PORT) || 4848;
-const TIMEOUT_MS = 1000;
 const SYNC = process.argv.includes("--sync");
+// --hold: PermissionRequest, which waits while the user answers from the page.
+const TIMEOUT_MS = process.argv.includes("--hold") ? 590 * 1000 : 1000;
 
 if (process.env.AGENT_ISLAND_OFF === "1") process.exit(0);
 

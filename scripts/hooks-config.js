@@ -21,6 +21,8 @@ const EVENTS = [
 const TOOL_EVENTS = new Set(["PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest"]);
 // These wait for the server's answer, which delivers messages and stop requests from the page.
 const SYNC_EVENTS = new Set(["PreToolUse", "PostToolUse", "Stop"]);
+// Waits (up to ~10 min) while the user answers a permission request from the page.
+const HOLD_EVENTS = new Set(["PermissionRequest"]);
 
 const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
 const settingsPath = path.join(configDir, "settings.json");
@@ -46,7 +48,11 @@ for (const event of Object.keys(hooks)) {
 
 if (mode === "install") {
   for (const event of EVENTS) {
-    const hook = SYNC_EVENTS.has(event) ? { type: "command", command: `${command} --sync`, timeout: 5 } : { type: "command", command, async: true, timeout: 5 };
+    const hook = HOLD_EVENTS.has(event)
+      ? { type: "command", command: `${command} --sync --hold`, timeout: 600 }
+      : SYNC_EVENTS.has(event)
+        ? { type: "command", command: `${command} --sync`, timeout: 5 }
+        : { type: "command", command, async: true, timeout: 5 };
     const group = { hooks: [hook] };
     if (TOOL_EVENTS.has(event)) group.matcher = "*";
     (hooks[event] = hooks[event] || []).push(group);

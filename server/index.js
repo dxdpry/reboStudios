@@ -8,6 +8,7 @@ const { createHistory } = require("./history");
 const { projectForFile, projectForCwd } = require("./projects");
 const { createWorkspace } = require("./workspace");
 const { readChat, createControl } = require("./chat");
+const { createPermissions } = require("./permissions");
 
 const PORT = Number(process.env.AGENT_ISLAND_PORT) || 4848;
 const ROOT = path.join(__dirname, "..");
@@ -35,6 +36,7 @@ const state = loadState();
 const history = createHistory(path.join(DATA_DIR, "history.json"));
 const workspace = createWorkspace(path.join(DATA_DIR, "workspace.json"));
 const control = createControl();
+const permissions = createPermissions({ onChange: () => changed() });
 const transcriptTimers = new Map();
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
 const CHAT_ID = /^[0-9a-f-]{8,64}$/i;
@@ -54,6 +56,7 @@ const server = http.createServer((req, res) => {
   if (req.method === "POST" && url.pathname === "/api/workspace") return handleWorkspace(req, res);
   if (req.method === "GET" && url.pathname === "/api/chat") return handleChatRead(url, req, res);
   if (req.method === "POST" && url.pathname === "/api/chat") return handleChatAction(req, res);
+  if (req.method === "POST" && url.pathname === "/api/presence") return handlePresence(req, res);
   if (req.method === "GET") return serveStatic(url.pathname, res);
   json(res, 404, { error: "not found" });
 });
@@ -82,12 +85,15 @@ function readJson(req, res, onBody) {
 function handleHook(req, res) {
   readJson(req, res, (event) => {
     const payload = event.payload || {};
-    const output = req.headers["x-rebo-sync"] === "1" && payload.session_id ? control.take(payload.session_id, payload.hook_event_name) : null;
+    const sync = req.headers["x-rebo-sync"] === "1" && payload.session_id;
+    appendLog(event);
+    if (applyEvent(state, payload, Date.now(), RESOLVE)) changed();
+    scheduleTranscriptScan(payload);
+    // A permission request waits here for an answer from the page (only while a page is watching).
+    if (sync && payload.hook_event_name === "PermissionRequest" && permissions.hold(payload, res)) return;
+    const output = sync ? control.take(payload.session_id, payload.hook_event_name) : null;
     json(res, 200, output || {});
     if (output) changed();
-    appendLog(event);
-    if (applyEvent(state, event.payload, Date.now(), RESOLVE)) changed();
-    scheduleTranscriptScan(event.payload);
   });
 }
 
@@ -117,10 +123,25 @@ function handleChatAction(req, res) {
   readJson(req, res, (action) => {
     const id = String(action.id || "");
     if (!CHAT_ID.test(id)) return json(res, 400, { error: "bad id" });
+    if (action.type === "permission") {
+      const ok = permissions.answer(id, String(action.requestId || ""), action.answer);
+      if (ok && action.answer.behavior !== "app" && state.sessions[id]) {
+        Object.assign(state.sessions[id], { needsYou: null, status: "working", activity: action.answer.behavior === "deny" ? "Permission denied" : "Going on…" });
+        changed();
+      }
+      return json(res, ok ? 200 : 400, { ok });
+    }
     const ok =
       action.type === "message" ? control.queue(id, action.text) : action.type === "stop" ? control.requestStop(id) : action.type === "cancel" ? control.cancel(id) : false;
     json(res, ok ? 200 : 400, { ok, pending: control.pending(id) });
   });
+}
+
+// Heartbeat from a visible page: permission requests are only held while someone is watching.
+function handlePresence(req, res) {
+  if (req.headers["x-rebo"] !== "1") return json(res, 403, { error: "forbidden" });
+  permissions.presence();
+  json(res, 200, { ok: true });
 }
 
 function scheduleTranscriptScan(payload) {
@@ -142,6 +163,7 @@ function publicState() {
   const pub = toPublic(state, Date.now(), history.projects());
   workspace.fileNewProjects(pub.projects);
   pub.workspace = workspace.toPublic();
+  pub.permissions = permissions.toPublic();
   return pub;
 }
 

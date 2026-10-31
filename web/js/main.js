@@ -27,6 +27,7 @@ const people = createPeople(stage.scene);
 const overlay = createOverlay(document.getElementById("overlay"), stage.camera, stage.renderer.domElement, (id) => select(id, false), (id) => openProject(id), (desk) => chatPanel.open(desk));
 const chatPanel = createChatPanel(document.getElementById("chat-panel"), {
   sessionFor: (id) => state.sessions.find((s) => s.id === id) || null,
+  permissionFor: (id) => (state.permissions || []).find((p) => p.sessionId === id) || null,
   onClose: () => {},
 });
 const card = createProjectCard(document.getElementById("project-card"), () => closeProject());
@@ -45,6 +46,7 @@ const panels = createPanels({
   sessionsBody: document.getElementById("sessions-body"),
   sessionsToggle: document.getElementById("sessions-toggle"),
   onSelect: (id, focus) => select(id, focus),
+  onOpenChat: (id) => openChat(id),
   colorOf: (projectId) => pick(COLORS.roof, hash(projectId) >>> 4),
 });
 const alerts = createAlerts(document.getElementById("alerts-toggle"));
@@ -178,6 +180,21 @@ function focusDesks() {
   }
   return { index: tower.floorIndexOf(project.id), desks };
 }
+
+function openChat(sessionId) {
+  const s = state.sessions.find((x) => x.id === sessionId);
+  const chat = s && (projectById(s.projectId)?.chats || []).find((c) => c.id === sessionId);
+  chatPanel.open({ id: sessionId, title: (chat && chat.title) || (s && s.title) || "Chat" });
+}
+
+// While this page is visible, permission requests wait here instead of in Claude's own dialog.
+function heartbeat() {
+  if (document.visibilityState !== "visible") return;
+  fetch("/api/presence", { method: "POST", headers: { "X-Rebo": "1" } }).catch(() => {});
+}
+heartbeat();
+setInterval(heartbeat, 10000);
+document.addEventListener("visibilitychange", heartbeat);
 
 function projectById(id) {
   return state.projects.find((p) => p.id === id);
