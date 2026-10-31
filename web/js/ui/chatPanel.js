@@ -152,9 +152,21 @@ export function createChatPanel(root, { sessionFor, permissionFor, managerFor, o
   function itemNode(item) {
     const li = el("li", `chat-item is-${item.role}`);
     if (item.role === "tool") li.append(el("span", "chat-tool", item.text));
-    else li.append(el("div", "chat-bubble", item.text));
+    else li.append(richText(item.text));
     li.title = new Date(item.at).toLocaleString();
     return li;
+  }
+
+  // Claude writes markdown: **bold** and `code` are shown as such (built as nodes, never as HTML).
+  function richText(text) {
+    const bubble = el("div", "chat-bubble");
+    for (const part of text.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/g)) {
+      if (!part) continue;
+      if (part.startsWith("**") && part.endsWith("**") && part.length > 4) bubble.append(el("strong", "", part.slice(2, -2)));
+      else if (part.startsWith("`") && part.endsWith("`") && part.length > 2) bubble.append(el("code", "chat-code", part.slice(1, -1)));
+      else bubble.append(document.createTextNode(part));
+    }
+    return bubble;
   }
 
   // Also called every second from main, so the status follows the live state between polls.
@@ -184,7 +196,9 @@ export function createChatPanel(root, { sessionFor, permissionFor, managerFor, o
     if (s && s.status === "needsYou") return { status: "needsYou", text: `Waiting for you · ${(s.needsYou && s.needsYou.detail) || s.activity}`, hint: "Answer above first; the next message goes after it.", canStop: true };
     if (live.running) {
       const agents = s && s.helpers && s.helpers.length ? ` · ${s.helpers.length} agent${s.helpers.length > 1 ? "s" : ""}` : "";
-      return { status: "running", text: `${(s && s.activity) || "Starting…"}${agents}`, hint: "Working. A new message reaches it after its current step.", canStop: true };
+      // Its own turn can end while background agents still work: the run is what counts.
+      const activity = !s ? "Starting…" : s.status === "done" || s.status === "idle" ? "Waiting for its agents" : s.activity;
+      return { status: "running", text: `${activity}${agents}`, hint: "Working. A new message reaches it after its current step.", canStop: true };
     }
     const last = live.lastResult;
     return { status: "idle", text: last ? `Ready · last task ${ago(Date.now() - last.at)} ago` : "Ready for a task", hint: "Enter sends · Shift+Enter new line", canStop: false };

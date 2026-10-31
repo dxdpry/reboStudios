@@ -826,3 +826,4 @@ body.chat-open .sessions, body.chat-open .alerts { display: none; }
 .skill-md { max-height: 320px; overflow: auto; margin: 0; padding: 10px; border-radius: 10px; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--glass-strong); }
 /* Inside a floor the manager, desks and shelf say it all; the project card would cover the corner. */
 body.floor-mode .project-card { display: none; }
+.chat-code { padding: 0 4px; border-radius: 4px; font-family: var(--mono); font-size: 0.88em; background: rgba(127, 140, 160, 0.16); }
