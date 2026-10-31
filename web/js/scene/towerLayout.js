@@ -3,7 +3,7 @@
 export const TOWER = { w: 10, d: 6.5, lobbyH: 3, floorH: 2.8, slab: 0.22 };
 export const MAX_DESKS = 6;
 
-// One desk per chat of the project, most recent first: back row, then front row.
+// One desk per agent the manager may run at once (its team setting): back row, then front row.
 export const DESKS = [
   { x: -1.4, z: -0.7 },
   { x: 0.9, z: -0.7 },
@@ -13,9 +13,12 @@ export const DESKS = [
   { x: 3.2, z: 1.7 },
 ];
 
-export function deskCount(project) {
-  return Math.max(1, Math.min(MAX_DESKS, (project && project.chatCount) || 1));
+export function deskCount(team) {
+  return Math.max(1, Math.min(MAX_DESKS, (team && team.maxAgents) || 1));
 }
+
+// The manager's corner, front left: a desk facing the room with the manager's chair behind it.
+export const MANAGER = { desk: { x: -3.55, z: 1.9 }, seat: { x: -3.55, z: 1.1 } };
 
 export const FURNITURE = {
   elevator: { x: -4.1, z: -2.5, w: 1.8, d: 1.5 },
@@ -56,7 +59,7 @@ export function floorTopY(index) {
 }
 
 // Spot for a person: { floor, x, z, facing, seated?, reclined?, leaving? }.
-// desk: the index of the person's own desk (their chat) on the floor.
+// desk: the index of the agent's desk on the floor.
 export function spotFor(place, floor, roofFloor, slot, desk) {
   if (place === "beach") {
     const chair = ROOF_CHAIRS[slot];
@@ -65,8 +68,9 @@ export function spotFor(place, floor, roofFloor, slot, desk) {
   }
   if (place === "boat") return { floor: 0, x: 1 + (slot % 3) * 0.6, z: TOWER.d / 2 + 2.5, facing: 0, leaving: true };
   if (!floor) return { floor: 0, x: -1 + (slot % 5) * 0.7, z: 1.2, facing: 0 };
-  // Editing and thinking happen at the chat's own desk.
-  if (place === "site" || place === "door" || !SPOTS[place]) {
+  if (place === "manager") return { floor, x: MANAGER.seat.x, z: MANAGER.seat.z, facing: 0, seated: true };
+  // An agent at work sits at its desk.
+  if (place === "desk" || place === "site" || place === "door" || !SPOTS[place]) {
     const d = DESKS[desk % DESKS.length];
     return { floor, x: d.x, z: d.z - 0.8, facing: 0, seated: true };
   }

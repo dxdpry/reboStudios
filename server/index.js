@@ -9,6 +9,8 @@ const { projectForFile, projectForCwd } = require("./projects");
 const { createWorkspace } = require("./workspace");
 const { readChat, createControl } = require("./chat");
 const { createPermissions } = require("./permissions");
+const { createManager } = require("./manager");
+const { createSkills } = require("./skills");
 
 const PORT = Number(process.env.AGENT_ISLAND_PORT) || 4848;
 const ROOT = path.join(__dirname, "..");
@@ -26,7 +28,7 @@ const HISTORY_RESCAN_MS = 2 * 60 * 1000;
 const TRANSCRIPT_DEBOUNCE_MS = 3000;
 // Events after which the session's transcript has new tokens or time worth reading.
 const TRANSCRIPT_EVENTS = new Set(["Stop", "SessionEnd", "SubagentStop", "PostToolUse", "PostToolUseFailure"]);
-const RESOLVE = { projectForFile, projectForCwd };
+const RESOLVE = { projectForFile, projectForCwd, managerProject: (id) => workspace.managerProject(id) };
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".svg": "image/svg+xml", ".json": "application/json" };
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -37,6 +39,9 @@ const history = createHistory(path.join(DATA_DIR, "history.json"));
 const workspace = createWorkspace(path.join(DATA_DIR, "workspace.json"));
 const control = createControl();
 const permissions = createPermissions({ onChange: () => changed() });
+// A manager's first chat is a fork of the project's latest one: its copied messages are not counted twice.
+const manager = createManager({ workspace, control, onChange: () => changed(), onSession: (sessionId, projectId, run) => run.forked && history.markFork(sessionId, run.startedAt) });
+const skills = createSkills(path.join(DATA_DIR, "secrets.json"));
 const transcriptTimers = new Map();
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
 const CHAT_ID = /^[0-9a-f-]{8,64}$/i;
@@ -57,6 +62,10 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && url.pathname === "/api/chat") return handleChatRead(url, req, res);
   if (req.method === "POST" && url.pathname === "/api/chat") return handleChatAction(req, res);
   if (req.method === "POST" && url.pathname === "/api/presence") return handlePresence(req, res);
+  if (req.method === "GET" && url.pathname === "/api/manager") return handleManagerRead(url, req, res);
+  if (req.method === "POST" && url.pathname === "/api/manager") return handleManagerAction(req, res);
+  if (req.method === "GET" && url.pathname === "/api/skills") return handleSkillsRead(url, req, res);
+  if (req.method === "POST" && url.pathname === "/api/skills") return handleSkillsAction(req, res);
   if (req.method === "GET") return serveStatic(url.pathname, res);
   json(res, 404, { error: "not found" });
 });
@@ -137,6 +146,79 @@ function handleChatAction(req, res) {
   });
 }
 
+function projectFor(id) {
+  return publicState().projects.find((p) => p.id === id) || null;
+}
+
+// The folder the project's manager works in: chosen in its settings, else the main one it wrote to.
+function folderOf(project) {
+  const team = workspace.teamOf(project.id);
+  return team.cwd || (project.folderPaths || []).find((dir) => fs.existsSync(dir)) || null;
+}
+
+// The manager's chat: its own once it has run, before that the project's latest chat (read-only).
+function handleManagerRead(url, req, res) {
+  if (req.headers["x-rebo"] !== "1") return json(res, 403, { error: "forbidden" });
+  const project = projectFor(String(url.searchParams.get("projectId") || ""));
+  if (!project) return json(res, 404, { error: "no such project" });
+  const team = workspace.teamOf(project.id);
+  const status = manager.statusOf(project.id);
+  const chatId = status.sessionId || (project.chats[0] && project.chats[0].id) || null;
+  const session = chatId && state.sessions[chatId];
+  const file = chatId && ((session && session.transcriptPath) || history.fileFor(chatId));
+  json(res, 200, {
+    projectId: project.id,
+    historyFrom: status.sessionId ? "manager" : chatId ? "latest" : null,
+    items: readChat(file),
+    pending: chatId ? control.pending(chatId) : { messages: [], stop: false },
+    status,
+    team: { maxAgents: team.maxAgents, permissionMode: team.permissionMode, cwd: folderOf(project) },
+    folders: project.folderPaths || [],
+  });
+}
+
+function handleManagerAction(req, res) {
+  if (req.headers["x-rebo"] !== "1") return json(res, 403, { error: "forbidden" });
+  readJson(req, res, (action) => {
+    const project = projectFor(String(action.projectId || ""));
+    if (!project) return json(res, 404, { ok: false, error: "no such project" });
+    const sessionId = manager.statusOf(project.id).sessionId;
+    if (action.type === "message") {
+      const result = manager.send({ ...project, folderPaths: [folderOf(project)].filter(Boolean) }, action.text);
+      return json(res, result.ok ? 200 : 400, result);
+    }
+    if (action.type === "stop") return json(res, 200, { ok: manager.stop(project.id) });
+    if (action.type === "cancel") return json(res, 200, { ok: !!sessionId && control.cancel(sessionId) });
+    json(res, 400, { ok: false });
+  });
+}
+
+function handleSkillsRead(url, req, res) {
+  if (req.headers["x-rebo"] !== "1") return json(res, 403, { error: "forbidden" });
+  const project = projectFor(String(url.searchParams.get("projectId") || ""));
+  if (!project) return json(res, 404, { error: "no such project" });
+  const cwd = folderOf(project);
+  json(res, 200, { cwd, skills: cwd ? skills.list(cwd) : [] });
+}
+
+function handleSkillsAction(req, res) {
+  if (req.headers["x-rebo"] !== "1") return json(res, 403, { error: "forbidden" });
+  readJson(req, res, async (action) => {
+    try {
+      if (action.type === "search") return json(res, 200, await skills.search(action.query));
+      if (action.type === "preview") return json(res, 200, await skills.preview(String(action.githubUrl || "")));
+      const project = projectFor(String(action.projectId || ""));
+      const cwd = project && folderOf(project);
+      if (!cwd) return json(res, 400, { ok: false, error: "Pick the project's folder in the manager settings first" });
+      if (action.type === "install") return json(res, 200, await skills.install(cwd, String(action.githubUrl || "")));
+      if (action.type === "remove") return json(res, 200, { ok: skills.remove(cwd, String(action.folder || "")) });
+      json(res, 400, { ok: false });
+    } catch (err) {
+      json(res, 200, { ok: false, error: err.message });
+    }
+  });
+}
+
 // Heartbeat from a visible page: permission requests are only held while someone is watching.
 function handlePresence(req, res) {
   if (req.headers["x-rebo"] !== "1") return json(res, 403, { error: "forbidden" });
@@ -164,6 +246,7 @@ function publicState() {
   workspace.fileNewProjects(pub.projects);
   pub.workspace = workspace.toPublic();
   pub.permissions = permissions.toPublic();
+  pub.managers = manager.toPublic();
   return pub;
 }
 

@@ -21,6 +21,8 @@ Open http://127.0.0.1:4848 and click "Enable alerts" to get the bell and system 
 - `server/state.js` — island state from hook events (pure, tested in `tests/`).
 - `server/activity.js` — tool → place on the island, short activity labels, project from `cwd`.
 - `server/permissions.js` — permission requests and AskUserQuestion answered from the page. The PermissionRequest hook (`--sync --hold`) waits for the answer, but only while a Rebo page is open and visible (heartbeat on `POST /api/presence`); otherwise, or with "Answer in Claude", Claude's own dialog shows as usual.
+- `server/manager.js` — each floor's manager: runs `claude -p` (stream-json) in the project's folder with the user's task, at most N subagents (team setting, 1–6), the chosen permission mode and the project's name as the chat title. The first task forks the project's latest chat (the history skips its copied messages); later ones resume the manager's chat. Messages during a run go to the inbox; Stop kills the run.
+- `server/skills.js` — the bookshelf: the project's `.claude/skills`, SkillsMP search (key in `data/secrets.json` as `skillsmpApiKey`, or `SKILLSMP_API_KEY`) and install from GitHub after a preview that lists files and flags scripts, network calls and keys. Removing moves the skill to `data/removed-skills`.
 - `server/index.js` — HTTP: `POST /hook`, `GET /events` (SSE), `GET /state`, `GET|POST /api/chat`, static files. Only answers Host `127.0.0.1`/`localhost` (DNS rebinding) and `/api/*` needs the `X-Rebo: 1` header (no cross-site requests).
 - `web/js/scene/` — Three.js low-poly island: `stage.js` renderer/camera/lights, `layout.js` positions,
   `island.js` terrain and landmarks, `props.js` builders, `people.js` colonists, `materials.js` palette.

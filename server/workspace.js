@@ -1,6 +1,8 @@
 // The user's own organisation of projects: categories (like the Claude app's sidebar groups) and
 // which projects are "monitored" (get a floor in the tower). Persisted in data/workspace.json.
 // First run copies the Claude app's groups from data/claude-groups.json (title -> group).
+// Each project with a floor also has a team: how many agents its manager may run at once, the
+// folder the manager works in, the permission mode and the manager's own chat (session id).
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
@@ -8,6 +10,9 @@ const crypto = require("crypto");
 const NAME_MAX = 40;
 const CATEGORY_MAX = 30;
 const OTHER = { id: "other", name: "Other" };
+const MAX_AGENTS = 6;
+const DEFAULT_TEAM = { maxAgents: 3, cwd: null, permissionMode: "bypassPermissions", sessionId: null };
+const PERMISSION_MODES = new Set(["bypassPermissions", "acceptEdits", "default", "plan"]);
 
 function createWorkspace(file) {
   const claude = loadClaudeGroups(path.join(path.dirname(file), "claude-groups.json"));
@@ -59,6 +64,25 @@ function createWorkspace(file) {
         category.name = name;
         break;
       }
+      case "setTeam": {
+        if (!id) return false;
+        const team = teamOf(id);
+        if (action.maxAgents !== undefined) {
+          const n = Number(action.maxAgents);
+          if (!Number.isInteger(n) || n < 1 || n > MAX_AGENTS) return false;
+          team.maxAgents = n;
+        }
+        if (action.permissionMode !== undefined) {
+          if (!PERMISSION_MODES.has(action.permissionMode)) return false;
+          team.permissionMode = action.permissionMode;
+        }
+        if (action.cwd !== undefined) {
+          if (!isDirectory(action.cwd)) return false;
+          team.cwd = path.resolve(action.cwd);
+        }
+        data.teams[id] = team;
+        break;
+      }
       case "deleteCategory": {
         if (action.categoryId === OTHER.id || !data.categories.some((c) => c.id === action.categoryId)) return false;
         data.categories = data.categories.filter((c) => c.id !== action.categoryId);
@@ -72,11 +96,26 @@ function createWorkspace(file) {
     return true;
   }
 
+  function teamOf(projectId) {
+    return { ...DEFAULT_TEAM, ...(data.teams[projectId] || {}) };
+  }
+
+  // Set by the server, not by page actions: the manager's chat once its first run started.
+  function setManagerSession(projectId, sessionId) {
+    data.teams[projectId] = { ...teamOf(projectId), sessionId };
+    save();
+  }
+
+  function managerProject(sessionId) {
+    for (const [pid, team] of Object.entries(data.teams)) if (team.sessionId === sessionId) return pid;
+    return null;
+  }
+
   function toPublic() {
     return data;
   }
 
-  return { apply, fileNewProjects, toPublic };
+  return { apply, fileNewProjects, toPublic, teamOf, setManagerSession, managerProject };
 }
 
 function cleanName(name) {
@@ -86,12 +125,20 @@ function cleanName(name) {
 function load(file, claude) {
   try {
     const data = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (Array.isArray(data.categories) && Array.isArray(data.monitored) && data.projectCategory) return data;
+    if (Array.isArray(data.categories) && Array.isArray(data.monitored) && data.projectCategory) return { teams: {}, ...data };
   } catch {
     // First run: start from the Claude app's groups.
   }
   const categories = claude.groups.map((name, i) => ({ id: `c-claude${i}`, name }));
-  return { categories: [...categories, OTHER], projectCategory: {}, monitored: [] };
+  return { categories: [...categories, OTHER], projectCategory: {}, monitored: [], teams: {} };
+}
+
+function isDirectory(dir) {
+  try {
+    return typeof dir === "string" && path.isAbsolute(dir) && fs.statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function loadClaudeGroups(file) {

@@ -3,7 +3,7 @@
 // and a window corner (web). Floors are rebuilt only when their project or desk count changes.
 import * as THREE from "three";
 import { COLORS, mat, mesh, box, flat, hash, pick } from "./materials.js";
-import { TOWER, DESKS, FURNITURE, ROOF_CHAIRS, floorBaseY, deskCount } from "./towerLayout.js";
+import { TOWER, DESKS, FURNITURE, ROOF_CHAIRS, MANAGER, floorBaseY, deskCount } from "./towerLayout.js";
 import { buildDesk, screenMaterial, buildBookshelf, buildServerRack, buildPlant, buildSofa, buildDeckChair, buildCoffeeBar, buildReception } from "./officeProps.js";
 
 const { w: W, d: D, floorH: H, lobbyH: LOBBY_H, slab: SLAB } = TOWER;
@@ -27,8 +27,8 @@ export function createTower(scene) {
   let focused = null;
   let order = []; // project ids, bottom to top
 
-  // projects: the ones that get a floor, oldest first.
-  function sync(projects) {
+  // projects: the ones that get a floor, oldest first; teamOf(id) -> the project's team settings.
+  function sync(projects, teamOf) {
     order = projects.map((p) => p.id);
     const wanted = new Set(order);
     for (const [id, f] of floors) {
@@ -37,7 +37,7 @@ export function createTower(scene) {
       floors.delete(id);
     }
     projects.forEach((project, i) => {
-      const desks = deskCount(project);
+      const desks = deskCount(teamOf(project.id));
       let f = floors.get(project.id);
       if (f && f.desks !== desks) {
         root.remove(f.group);
@@ -149,7 +149,15 @@ function buildFloor(project, desks) {
     g.add(object);
     return object;
   };
-  place(buildBookshelf(), FURNITURE.bookshelf);
+  // The bookshelf holds the project's skills; the corner desk is the manager's. Both open a panel.
+  const shelf = place(buildBookshelf(), FURNITURE.bookshelf);
+  const managerScreen = screenMaterial();
+  const managerDesk = buildDesk(managerScreen);
+  managerDesk.position.set(MANAGER.desk.x, SLAB, MANAGER.desk.z);
+  managerDesk.scale.set(1.1, 1, 1);
+  const rug = box(2.3, 0.02, 2.1, `#${accent.getHexString()}`);
+  rug.position.set(MANAGER.desk.x, SLAB + 0.02, (MANAGER.desk.z + MANAGER.seat.z) / 2);
+  g.add(managerDesk, flat(rug));
   place(buildServerRack(ledMat), FURNITURE.rack, Math.PI);
   FURNITURE.plants.forEach((spot, i) => place(buildPlant(i + 1), spot));
 
@@ -168,12 +176,16 @@ function buildFloor(project, desks) {
   g.add(dim);
 
   g.traverse((o) => (o.userData.projectId = project.id));
+  shelf.traverse((o) => (o.userData.target = "skills"));
+  managerDesk.traverse((o) => (o.userData.target = "manager"));
+  rug.userData.target = "manager";
 
   function setState(status, busyDesks, night, t) {
     const on = status !== "idle";
     wallMat.emissiveIntensity = on ? 0.14 + night * 0.3 : 0;
     ceilingMat.emissiveIntensity = on ? 1 : 0.05;
     screens.forEach((s, i) => (s.emissiveIntensity = busyDesks.has(i) ? 1 : 0));
+    managerScreen.emissiveIntensity = on ? 1 : 0.15;
     ledMat.color.set(on && Math.floor(t * 3) % 2 ? "#7cf0b0" : "#3f8a66");
     dimMat.opacity = on ? 0 : 0.16 + night * 0.4;
   }

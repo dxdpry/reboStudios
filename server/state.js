@@ -29,7 +29,11 @@ function applyEvent(state, payload, now, resolve = DEFAULT_RESOLVE) {
   const written = WRITE_TOOLS.has(payload.tool_name) && payload.tool_input && resolve.projectForFile(payload.tool_input.file_path || payload.tool_input.notebook_path);
   const folder = written || (session.folder ? null : resolve.projectForCwd(payload.cwd));
   if (folder) session.folder = { id: folder.id, name: folder.name, cwd: folder.cwd };
-  session.projectId = touchProject(state, projectKey(session.title, id), session.title || "Untitled chat", now).id;
+  // A manager chat started by Rebo belongs to its project even when the names differ.
+  const managed = resolve.managerProject && resolve.managerProject(id);
+  const key = managed || projectKey(session.title, id);
+  session.projectId = touchProject(state, key, (managed && state.projects[managed] && state.projects[managed].name) || session.title || "Untitled chat", now).id;
+  session.managed = !!managed;
 
   const tool = payload.tool_name;
   const toolLabel = tool ? labelForTool(tool, payload.tool_input || {}) : "";
@@ -128,13 +132,14 @@ function toPublic(state, now, history = {}) {
       chatCount: (h.chats || []).length,
       chats: (h.chats || []).slice(0, CHATS_IN_STATE),
       folders: Object.values(h.folders || {}).map((f) => f.name),
+      folderPaths: Object.values(h.folders || {}).map((f) => f.cwd).filter(Boolean),
     });
   }
   const inUse = new Set(sessions.map((s) => s.projectId));
   for (const p of Object.values(state.projects)) {
     // A project only seen live (no transcript history yet) disappears once nobody is on it.
     if (!byId.has(p.id) && !inUse.has(p.id)) continue;
-    const merged = byId.get(p.id) || { ...p, stats: statsOf(null), chatCount: 0, chats: [], folders: [] };
+    const merged = byId.get(p.id) || { ...p, stats: statsOf(null), chatCount: 0, chats: [], folders: [], folderPaths: [] };
     merged.firstSeenAt = Math.min(merged.firstSeenAt || p.firstSeenAt, p.firstSeenAt);
     merged.lastActiveAt = Math.max(merged.lastActiveAt || 0, p.lastActiveAt);
     byId.set(p.id, merged);

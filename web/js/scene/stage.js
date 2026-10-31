@@ -45,11 +45,18 @@ export function createStage(container) {
     animateTo({ x: 0, z: 0, polar: SIDE_POLAR, size, y: THREE.MathUtils.clamp(y ?? to.y, range.min, range.max) });
   }
 
-  function showFloor({ y, width, depth }) {
+  // free: { left, right } in pixels, the part of the screen not covered by side panels; the floor
+  // is fitted and centred there.
+  function showFloor({ y, width, depth, free }) {
     mode = "floor";
-    const aspect = canvas.clientWidth / Math.max(canvas.clientHeight, 1);
-    const size = Math.max(depth + FLOOR_MARGIN * 2, (width + FLOOR_MARGIN * 2) / aspect);
-    animateTo({ x: 0, z: 0, y, polar: TOP_POLAR, size });
+    const w = canvas.clientWidth;
+    const h = Math.max(canvas.clientHeight, 1);
+    const left = free ? free.left : 0;
+    const right = free ? free.right : w;
+    const freeWidth = Math.max(right - left, w * 0.3);
+    const size = Math.max(depth + FLOOR_MARGIN * 2, ((width + FLOOR_MARGIN * 2) * h) / freeWidth);
+    const x = ((w / 2 - (left + right) / 2) * size) / h;
+    animateTo({ x, z: 0, y, polar: TOP_POLAR, size });
   }
 
   function scrollTo(y) {

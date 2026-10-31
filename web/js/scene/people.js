@@ -68,8 +68,11 @@ export function createPeople(scene) {
   let firstSync = true;
 
   // floorOf(projectId) -> floor index (0 = lobby when the project has no floor); roof = roof index;
-  // deskOf(session) -> index of the desk of that session's chat on its floor.
-  function sync(state, floorOf, roof, deskOf) {
+  // teamOf(projectId) -> { desks, managerSessionId, managerRunning } for projects with a floor.
+  // On a floor: the manager sits in the corner; every agent working right now (a chat in progress
+  // or a subagent) takes the next free desk; when desks run out, the rest stand at the shelf, rack
+  // or window. Finished chats rest on the roof.
+  function sync(state, floorOf, roof, teamOf) {
     const seen = new Set();
     const slots = new Map();
     const nextSlot = (key) => {
@@ -77,25 +80,47 @@ export function createPeople(scene) {
       slots.set(key, n + 1);
       return n;
     };
+    const seats = new Map(); // floor -> next free desk
+    const seatFor = (floor, desks) => {
+      const n = seats.get(floor) || 0;
+      seats.set(floor, n + 1);
+      return n < desks ? n : -1;
+    };
+    const place = (key, looks, small, target, fields) => {
+      const e = upsert(key, looks, small, firstSync ? target : { ...ELEVATOR_SPOT, floor: target.floor });
+      Object.assign(e, { target, ...fields });
+      seen.add(key);
+    };
+
+    const managerSessions = new Map(); // manager session id -> project id
+    for (const p of state.projects) {
+      const floor = floorOf(p.id);
+      if (!floor) continue;
+      const team = teamOf(p.id);
+      if (team.managerSessionId) managerSessions.set(team.managerSessionId, p.id);
+      const live = team.managerSessionId && state.sessions.find((s) => s.id === team.managerSessionId);
+      const session = live || { id: `manager:${p.id}`, projectId: p.id, status: team.managerRunning ? "working" : "idle", activity: team.managerRunning ? "Starting…" : "Manager", title: "Manager", helpers: [] };
+      const status = live && team.managerRunning ? live.status : team.managerRunning ? "working" : "idle";
+      const target = spotFor("manager", floor, roof, 0, 0);
+      place(`manager:${p.id}`, looksFor(`manager:${p.id}`), false, target, { session, helper: null, manager: p.id, place: "manager", desk: -1, pose: poseFor(status === "done" ? "idle" : status, "site", target) });
+    }
 
     for (const s of [...state.sessions].sort((a, b) => a.startedAt - b.startedAt)) {
       const floor = floorOf(s.projectId);
-      const place = s.status === "ended" ? "boat" : s.place;
-      // A chat's person stays at its own desk whatever tool it uses (the bubble shows the tool);
-      // only resting (roof) and leaving move it. Helpers walk to the shelf, rack and window.
-      const spot = place === "beach" || place === "boat" ? place : "site";
-      const key = spot === "site" ? `${floor}:site` : spot;
-      const target = spotFor(spot, floor, roof, nextSlot(key), deskOf(s));
-      const e = upsert(s.id, looksFor(s.id), false, firstSync ? target : { ...ELEVATOR_SPOT, floor });
-      Object.assign(e, { session: s, helper: null, target, place, pose: poseFor(s.status, spot, target) });
-      seen.add(s.id);
-
+      const desks = floor ? teamOf(s.projectId).desks : 0;
+      const working = s.status === "working" || s.status === "thinking" || s.status === "needsYou";
+      if (!managerSessions.has(s.id)) {
+        const spot = s.status === "ended" ? "boat" : !working ? "beach" : "desk";
+        const seat = spot === "desk" && floor ? seatFor(floor, desks) : 0;
+        const at = seat === -1 ? standingPlace(s.place) : spot;
+        const target = spotFor(at, floor, roof, nextSlot(at === "desk" ? `${floor}:desk` : at === "beach" || at === "boat" ? at : `${floor}:${at}`), seat);
+        place(s.id, looksFor(s.id), false, target, { session: s, helper: null, manager: null, place: at, desk: at === "desk" ? seat : -1, pose: poseFor(s.status, at === "desk" ? "site" : at, target) });
+      }
       for (const h of s.helpers || []) {
-        const hk = `${s.id}:${h.id}`;
-        const hTarget = spotFor(h.place === "site" || h.place === "door" ? "library" : h.place, floor, roof, nextSlot(floor ? `${floor}:${h.place}` : "0:site"), 0);
-        const helper = upsert(hk, looksFor(h.id), true, firstSync ? hTarget : { ...ELEVATOR_SPOT, floor });
-        Object.assign(helper, { session: s, helper: h, target: hTarget, place: h.place, pose: POSE_BY_PLACE[h.place] || "thinking" });
-        seen.add(hk);
+        const seat = floor ? seatFor(floor, desks) : -1;
+        const at = seat >= 0 ? "desk" : standingPlace(h.place);
+        const target = spotFor(at, floor, roof, nextSlot(floor ? `${floor}:${at}` : "0:site"), seat);
+        place(`${s.id}:${h.id}`, looksFor(h.id), true, target, { session: s, helper: h, manager: null, place: at, desk: seat, pose: at === "desk" ? "typing" : POSE_BY_PLACE[h.place] || "thinking" });
       }
     }
     for (const [key, e] of entities) {
@@ -174,6 +199,9 @@ export function createPeople(scene) {
         feet[0].position.z = Math.sin(p * 10) * 0.14;
         feet[1].position.z = -Math.sin(p * 10) * 0.14;
         break;
+      case "sitting":
+        body.position.y = -0.28 + Math.sin(p * 1.5) * 0.01;
+        break;
       case "thinking-seated":
         body.position.y = -0.28;
         hands[1].position.set(0.18, 0.86, 0.24);
@@ -235,9 +263,14 @@ export function createPeople(scene) {
   return { sync, update, list, get };
 }
 
+// Where an agent stands when every desk is taken: by the tool it uses (shelf, rack, window, elevator).
+function standingPlace(place) {
+  return POSE_BY_PLACE[place] && place !== "site" && place !== "door" ? place : "library";
+}
+
 function poseFor(status, place, target) {
   if (status === "needsYou") return "flag";
-  if (status === "done") return place === "beach" ? "resting" : "idle";
+  if (status === "done" || status === "idle") return place === "beach" ? "resting" : target.seated ? "sitting" : "idle";
   if (status === "thinking") return target.seated ? "thinking-seated" : "thinking";
   if (status === "working") return POSE_BY_PLACE[place] || "thinking";
   return "idle";

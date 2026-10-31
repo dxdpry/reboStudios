@@ -10,6 +10,7 @@ import { createPanels } from "./ui/panels.js";
 import { createProjectCard } from "./ui/projectCard.js";
 import { createDirectory } from "./ui/directory.js";
 import { createChatPanel } from "./ui/chatPanel.js";
+import { createSkillsPanel } from "./ui/skillsPanel.js";
 import { ICONS } from "./ui/icons.js";
 import { ago, hours as formatHours } from "./ui/format.js";
 import { createAlerts } from "./notify.js";
@@ -24,12 +25,15 @@ const BUILDING_MARGIN = 1.5;
 const stage = createStage(document.getElementById("stage"));
 const tower = createTower(stage.scene);
 const people = createPeople(stage.scene);
-const overlay = createOverlay(document.getElementById("overlay"), stage.camera, stage.renderer.domElement, (id) => select(id, false), (id) => openProject(id), (desk) => chatPanel.open(desk));
+const overlay = createOverlay(document.getElementById("overlay"), stage.camera, stage.renderer.domElement, (key) => openPerson(key), (id) => openProject(id), (target) => openTarget(target));
 const chatPanel = createChatPanel(document.getElementById("chat-panel"), {
   sessionFor: (id) => state.sessions.find((s) => s.id === id) || null,
   permissionFor: (id) => (state.permissions || []).find((p) => p.sessionId === id) || null,
-  onClose: () => {},
+  managerFor: (projectId) => (state.managers || {})[projectId] || null,
+  onTeamChange: (projectId, patch) => send({ type: "setTeam", projectId, ...patch }),
+  onClose: () => fitFloor(),
 });
+const skillsPanel = createSkillsPanel(document.getElementById("skills-panel"), { onClose: () => fitFloor() });
 const card = createProjectCard(document.getElementById("project-card"), () => closeProject());
 const directory = createDirectory(document.getElementById("directory"), {
   open: (id) => openProject(id),
@@ -61,7 +65,7 @@ const backButton = document.getElementById("back");
 backButton.addEventListener("click", () => closeProject());
 const emptyHint = document.getElementById("empty-hint");
 
-let state = { now: Date.now(), projects: [], sessions: [], workspace: { categories: [], projectCategory: {}, monitored: [] } };
+let state = { now: Date.now(), projects: [], sessions: [], managers: {}, permissions: [], workspace: { categories: [], projectCategory: {}, monitored: [], teams: {} } };
 let clockOffset = 0;
 let selectedId = null;
 let selectedProjectId = null;
@@ -80,7 +84,7 @@ function connect() {
     state = JSON.parse(msg.data);
     clockOffset = state.now - Date.now();
     layoutFloors();
-    people.sync(state, (id) => tower.floorIndexOf(id), tower.roofIndex(), deskOf);
+    people.sync(state, (id) => tower.floorIndexOf(id), tower.roofIndex(), teamOf);
     alerts.update(state);
     if (selectedId && !state.sessions.some((s) => s.id === selectedId)) selectedId = null;
     if (focusedProjectId && !tower.floorIndexOf(focusedProjectId)) closeProject();
@@ -100,7 +104,7 @@ async function send(action) {
 function layoutFloors() {
   const monitored = new Set(state.workspace.monitored);
   const withFloor = state.projects.filter((p) => monitored.has(p.id)).sort((a, b) => (a.firstSeenAt || 0) - (b.firstSeenAt || 0));
-  tower.sync(withFloor);
+  tower.sync(withFloor, teamOf);
   floors = withFloor.map((project, i) => ({ project, index: i + 1 }));
   emptyHint.hidden = floors.length > 0;
   const key = floors.map((f) => f.project.id).join("|");
@@ -124,12 +128,12 @@ function topScrollY() {
   return floorBaseY(floors.length + 1);
 }
 
-// A session sits at the desk of its own chat (the project's chats are sorted most recent first).
-function deskOf(session) {
-  const project = projectById(session.projectId);
-  if (!project) return 0;
-  const i = (project.chats || []).findIndex((c) => c.id === session.id);
-  return i >= 0 && i < deskCount(project) ? i : 0;
+// A project's team: how many desks (agents at once) and its manager's chat, if it has run.
+const DEFAULT_TEAM = { maxAgents: 3, sessionId: null };
+function teamOf(projectId) {
+  const team = { ...DEFAULT_TEAM, ...((state.workspace.teams || {})[projectId] || {}) };
+  const run = (state.managers || {})[projectId];
+  return { maxAgents: team.maxAgents, desks: deskCount(team), managerSessionId: (run && run.sessionId) || team.sessionId, managerRunning: !!(run && run.running) };
 }
 
 const ACTIVE = new Set(["working", "thinking", "needsYou"]);
@@ -147,44 +151,83 @@ function projectInfo() {
   return map;
 }
 
+// Desks in use per project (lit screens), from where the agents sit.
 function busyDesks() {
   const map = new Map();
-  for (const s of state.sessions) {
-    if (!ACTIVE.has(s.status)) continue;
-    if (!map.has(s.projectId)) map.set(s.projectId, new Set());
-    map.get(s.projectId).add(deskOf(s));
+  for (const e of people.list()) {
+    if (e.place !== "desk" || e.desk < 0) continue;
+    const id = e.session.projectId;
+    if (!map.has(id)) map.set(id, new Set());
+    map.get(id).add(e.desk);
   }
   return map;
 }
 
-// Floor mode: one tag per desk with the chat's title and whether it is running now.
-function focusDesks() {
+// Floor mode: a tag on every desk (who works there now), on the manager and on the bookshelf.
+function focusInfo() {
   if (!focusedProjectId) return null;
   const project = projectById(focusedProjectId);
   if (!project) return null;
-  const live = new Map(state.sessions.filter((s) => ACTIVE.has(s.status)).map((s) => [s.id, s]));
-  const desks = [];
-  for (let i = 0; i < deskCount(project); i++) {
-    const chat = (project.chats || [])[i];
-    const session = chat && live.get(chat.id);
-    if (!chat) {
-      desks.push({ id: null, title: "New chat", meta: "", status: "idle" });
-      continue;
-    }
-    desks.push({
-      id: chat.id,
-      title: chat.title,
-      meta: session ? session.activity : `${formatHours(chat.activeMs)} · ${ago(Date.now() - chat.lastAt)} ago`,
-      status: session ? (session.status === "needsYou" ? "needsYou" : "running") : "idle",
-    });
+  const team = teamOf(project.id);
+  const desks = Array.from({ length: team.desks }, () => ({ target: null, title: "Free desk", meta: "", status: "idle" }));
+  for (const e of people.list()) {
+    if (e.session.projectId !== project.id || e.place !== "desk" || e.desk < 0 || e.desk >= desks.length) continue;
+    const s = e.session;
+    const status = s.status === "needsYou" ? "needsYou" : "running";
+    desks[e.desk] = e.helper
+      ? { target: targetForSession(s), title: helperName(e.helper), meta: e.helper.activity, status: "running" }
+      : { target: targetForSession(s), title: s.title || "Chat", meta: s.status === "needsYou" ? (s.needsYou && s.needsYou.detail) || s.activity : s.activity, status };
   }
-  return { index: tower.floorIndexOf(project.id), desks };
+  const run = (state.managers || {})[project.id];
+  const managerSession = team.managerSessionId && state.sessions.find((s) => s.id === team.managerSessionId);
+  const managerStatus = managerSession && managerSession.status === "needsYou" ? "needsYou" : run && run.running ? "running" : "idle";
+  return {
+    index: tower.floorIndexOf(project.id),
+    desks,
+    manager: { target: { kind: "manager", projectId: project.id, title: project.name }, title: "Manager", meta: managerStatus === "idle" ? "Click to give a task" : (managerSession && managerSession.activity) || "Working…", status: managerStatus },
+    shelf: { target: { kind: "skills", projectId: project.id, name: project.name }, title: "Skills", meta: "Knowledge for the agents" },
+  };
+}
+
+function helperName(helper) {
+  const type = String(helper.type || "agent");
+  return type === "general-purpose" || type === "helper" ? "Agent" : type.replace(/[-_]/g, " ");
+}
+
+// Where a person leads: the manager's chat for the manager and its agents, else that chat.
+function targetForSession(s) {
+  const managed = Object.entries(state.managers || {}).find(([, m]) => m.sessionId === s.id) || Object.entries(state.workspace.teams || {}).find(([, t]) => t.sessionId === s.id);
+  if (managed) return { kind: "manager", projectId: managed[0], title: (projectById(managed[0]) || {}).name || "Manager" };
+  const chat = (projectById(s.projectId)?.chats || []).find((c) => c.id === s.id);
+  return { kind: "chat", id: s.id, title: (chat && chat.title) || s.title || "Chat" };
+}
+
+function openTarget(target) {
+  if (!target) return;
+  if (target.kind === "skills") {
+    chatPanel.close();
+    skillsPanel.open({ id: target.projectId, name: target.name });
+  } else {
+    skillsPanel.close();
+    chatPanel.open(target);
+  }
+  fitFloor();
 }
 
 function openChat(sessionId) {
   const s = state.sessions.find((x) => x.id === sessionId);
-  const chat = s && (projectById(s.projectId)?.chats || []).find((c) => c.id === sessionId);
-  chatPanel.open({ id: sessionId, title: (chat && chat.title) || (s && s.title) || "Chat" });
+  if (s) openTarget(targetForSession(s));
+}
+
+function openPerson(key) {
+  const e = people.get(key);
+  if (!e) return;
+  if (e.manager) {
+    const project = projectById(e.manager);
+    return openTarget({ kind: "manager", projectId: e.manager, title: project ? project.name : "Manager" });
+  }
+  select(e.session.id, false);
+  openTarget(targetForSession(e.session));
 }
 
 // While this page is visible, permission requests wait here instead of in Claude's own dialog.
@@ -221,19 +264,40 @@ function openProject(id) {
   if (index) {
     focusedProjectId = id;
     tower.setFocus(id);
-    stage.showFloor({ y: floorTopY(index), width: TOWER.w, depth: TOWER.d });
+    fitFloor();
     backButton.hidden = false;
+    document.body.classList.add("floor-mode");
   }
   renderPanels();
 }
 
+// The floor view fits the space left between the side panels.
+function fitFloor() {
+  const index = focusedProjectId && tower.floorIndexOf(focusedProjectId);
+  if (!index) return;
+  const pad = 16;
+  const visible = (id) => {
+    const el = document.getElementById(id);
+    return el && !el.hidden && getComputedStyle(el).display !== "none" ? el.getBoundingClientRect() : null;
+  };
+  const dir = visible("directory");
+  const side = visible("chat-panel") || visible("skills-panel");
+  const wide = window.innerWidth > 760;
+  const free = wide ? { left: dir ? dir.right + pad : 0, right: side ? side.left - pad : window.innerWidth } : null;
+  stage.showFloor({ y: floorTopY(index), width: TOWER.w, depth: TOWER.d, free });
+}
+window.addEventListener("resize", () => fitFloor());
+document.querySelector("#directory .panel-head").addEventListener("click", () => setTimeout(fitFloor));
+
 function closeProject() {
   chatPanel.close();
+  skillsPanel.close();
   const wasFocused = focusedProjectId;
   focusedProjectId = null;
   selectedProjectId = null;
   tower.setFocus(null);
   backButton.hidden = true;
+  document.body.classList.remove("floor-mode");
   if (wasFocused) {
     showBuilding(false);
     const index = tower.floorIndexOf(wasFocused);
@@ -278,16 +342,21 @@ stage.renderer.domElement.addEventListener("pointerup", (ev) => {
   raycaster.setFromCamera(pointer, stage.camera);
   const visiblePeople = people.list().filter((e) => e.model.root.visible).map((e) => e.model.root);
   const hit = raycaster.intersectObjects([...visiblePeople, ...tower.floorObjects()], true)[0];
-  const key = hit && hit.object.userData.entityKey;
-  selectedId = key ? key.split(":")[0] : null;
-  const projectId = !key && hit && hit.object.userData.projectId;
-  if (projectId && projectId !== focusedProjectId) openProject(projectId);
-  else renderPanels();
+  const data = hit ? hit.object.userData : {};
+  if (data.entityKey) return openPerson(data.entityKey);
+  selectedId = null;
+  if (data.projectId && data.projectId !== focusedProjectId) return openProject(data.projectId);
+  // Inside a floor: the manager's desk and the bookshelf open their panels.
+  const project = data.projectId && projectById(data.projectId);
+  if (project && data.target === "manager") return openTarget({ kind: "manager", projectId: project.id, title: project.name });
+  if (project && data.target === "skills") return openTarget({ kind: "skills", projectId: project.id, name: project.name });
+  renderPanels();
 });
 
 window.addEventListener("keydown", (ev) => {
   if (ev.key !== "Escape") return;
-  if (chatPanel.chatId) chatPanel.close();
+  if (chatPanel.isOpen) chatPanel.close();
+  else if (skillsPanel.projectId) skillsPanel.close();
   else if (focusedProjectId) closeProject();
 });
 
@@ -304,7 +373,7 @@ function frame() {
   const status = projectStatuses();
   tower.update(t, { night, statusByProject: status, busyDesks: busyDesks() });
   stage.render(dt);
-  overlay.update(people.list(), focusedProjectId ? [] : floors, selectedId, projectInfo(), selectedProjectId, focusDesks(), chatPanel.chatId);
+  overlay.update(people.list(), focusedProjectId ? [] : floors, selectedId, projectInfo(), selectedProjectId, focusInfo(), chatPanel.chatId || chatPanel.managerProjectId);
   if (t - lastPanelRender > 1) {
     lastPanelRender = t;
     renderPanels();

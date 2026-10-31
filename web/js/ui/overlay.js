@@ -3,12 +3,12 @@
 import * as THREE from "three";
 import { ICONS, iconForEntity } from "./icons.js";
 import { hours, compact, freshTokens, ago } from "./format.js";
-import { TOWER, DESKS, floorBaseY, floorTopY } from "../scene/towerLayout.js";
+import { TOWER, DESKS, MANAGER, FURNITURE, floorBaseY, floorTopY } from "../scene/towerLayout.js";
 
 const HEAD_OFFSET = 1.45; // above the head, in person units (scaled with the model)
 const STATUS_TEXT = { running: "Running", needsYou: "Needs you", idle: "Idle" };
 
-export function createOverlay(layer, camera, canvas, onSelect, onSelectProject, onOpenChat) {
+export function createOverlay(layer, camera, canvas, onSelect, onSelectProject, onOpenTarget) {
   const bubbles = new Map();
   const plaques = new Map();
   const deskTags = [];
@@ -27,7 +27,7 @@ export function createOverlay(layer, camera, canvas, onSelect, onSelectProject, 
       el.className = "bubble";
       el.type = "button";
       el.innerHTML = '<span class="bubble-icon"></span><span class="bubble-text"></span>';
-      el.addEventListener("click", () => onSelect(key.split(":")[0]));
+      el.addEventListener("click", () => onSelect(key));
       layer.appendChild(el);
       bubbles.set(key, { el, icon: "", text: "" });
     }
@@ -48,8 +48,8 @@ export function createOverlay(layer, camera, canvas, onSelect, onSelectProject, 
   }
 
   // floors: [{ project, index }]; info: Map projectId -> { status, activity };
-  // focus: { index, desks: [{ id, title, meta, status }] } in floor mode, else null.
-  function update(entities, floors, selectedId, info, selectedProjectId, focus, openChatId) {
+  // focus (floor mode, else null): { index, desks, manager, shelf }, each tag { target, title, meta, status }.
+  function update(entities, floors, selectedId, info, selectedProjectId, focus, openKey) {
     const seen = new Set();
     for (const e of entities) {
       const b = bubbleFor(e.key);
@@ -105,8 +105,8 @@ export function createOverlay(layer, camera, canvas, onSelect, onSelectProject, 
         plaque.key = key;
       }
       plaque.el.classList.toggle("selected", project.id === selectedProjectId);
-      // On the glass, top-left of the floor, so side panels never cover it.
-      const corner = new THREE.Vector3(-TOWER.w / 2 + 0.6, floorBaseY(index) + TOWER.floorH - 0.25, TOWER.d / 2);
+      // On the glass near the top of the floor, right of the manager's corner (left panels never cover it).
+      const corner = new THREE.Vector3(-2.3, floorBaseY(index) + TOWER.floorH - 0.25, TOWER.d / 2);
       const p = toScreen(corner);
       plaque.el.hidden = !p.visible;
       plaque.el.style.transform = `translate(${p.x}px, ${p.y}px)`;
@@ -116,36 +116,53 @@ export function createOverlay(layer, camera, canvas, onSelect, onSelectProject, 
       plaque.el.remove();
       plaques.delete(id);
     }
-    updateDeskTags(focus, openChatId);
+    updateTags(focus, openKey);
   }
 
-  // Floor mode: a name tag on every desk with its chat's title and state; the (i) opens the chat.
-  function updateDeskTags(focus, openChatId) {
-    const desks = focus ? focus.desks : [];
-    while (deskTags.length < desks.length) {
+  // Floor mode: a tag on every desk (the agent working there), on the manager and on the bookshelf.
+  // Clicking a tag opens what it points to (the manager's chat, a chat, the skills).
+  function tagAt(i) {
+    while (deskTags.length <= i) {
       const el = document.createElement("button");
       el.type = "button";
       el.className = "desk-tag";
-      el.innerHTML = `<span class="desk-info" aria-hidden="true">${ICONS.info}</span><span class="desk-text"><span class="tag-line"><span class="tag-dot"></span><span class="tag-name"></span></span><span class="tag-stats"></span></span>`;
-      const tag = { el, name: el.querySelector(".tag-name"), meta: el.querySelector(".tag-stats"), desk: null };
-      el.addEventListener("click", () => tag.desk && tag.desk.id && onOpenChat(tag.desk));
+      el.innerHTML = `<span class="desk-info" aria-hidden="true"></span><span class="desk-text"><span class="tag-line"><span class="tag-dot"></span><span class="tag-name"></span></span><span class="tag-stats"></span></span>`;
+      const tag = { el, icon: el.querySelector(".desk-info"), name: el.querySelector(".tag-name"), meta: el.querySelector(".tag-stats"), data: null, iconKey: "" };
+      el.addEventListener("click", () => tag.data && tag.data.target && onOpenTarget(tag.data.target));
       layer.appendChild(el);
       deskTags.push(tag);
     }
-    deskTags.forEach((tag, i) => {
-      const desk = desks[i];
-      tag.desk = desk || null;
-      tag.el.hidden = !desk;
-      if (!desk) return;
-      tag.el.disabled = !desk.id;
-      tag.el.title = desk.id ? `Open "${desk.title}"` : "";
-      tag.el.classList.toggle("open", !!desk.id && desk.id === openChatId);
-      tag.name.textContent = desk.title;
-      tag.meta.textContent = desk.meta;
-      tag.el.dataset.status = desk.status;
-      const p = toScreen(new THREE.Vector3(DESKS[i].x, floorTopY(focus.index) + 0.9, DESKS[i].z + 0.55));
+    return deskTags[i];
+  }
+
+  function updateTags(focus, openKey) {
+    const items = [];
+    if (focus) {
+      const y = floorTopY(focus.index);
+      focus.desks.forEach((desk, i) => items.push({ data: desk, kind: "desk", icon: "info", at: new THREE.Vector3(DESKS[i].x, y + 0.9, DESKS[i].z + 0.55) }));
+      items.push({ data: focus.manager, kind: "manager", icon: "crown", at: new THREE.Vector3(MANAGER.desk.x, y + 0.9, MANAGER.desk.z + 0.55) });
+      items.push({ data: focus.shelf, kind: "shelf", icon: "book", at: new THREE.Vector3(FURNITURE.bookshelf.x, y + 2, FURNITURE.bookshelf.z + 0.5) });
+    }
+    items.forEach((item, i) => {
+      const tag = tagAt(i);
+      const { data } = item;
+      tag.data = data;
+      tag.el.hidden = false;
+      tag.el.disabled = !data.target;
+      tag.el.dataset.kind = item.kind;
+      tag.el.dataset.status = data.status || "idle";
+      if (tag.iconKey !== item.icon) {
+        tag.icon.innerHTML = ICONS[item.icon];
+        tag.iconKey = item.icon;
+      }
+      tag.name.textContent = data.title;
+      tag.meta.textContent = data.meta || "";
+      tag.el.title = data.target ? `Open ${data.title}` : "";
+      tag.el.classList.toggle("open", !!data.target && !!openKey && (data.target.id === openKey || (data.target.kind === "manager" && data.target.projectId === openKey)));
+      const p = toScreen(item.at);
       tag.el.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, 0)`;
     });
+    for (let i = items.length; i < deskTags.length; i++) deskTags[i].el.hidden = true;
   }
 
   return { update };

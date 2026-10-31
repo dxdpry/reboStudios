@@ -47,6 +47,8 @@ function createHistory(storeFile) {
     }
     const entry = store.files[file] || (store.files[file] = newFileEntry(file));
     if (stat.size < entry.offset) Object.assign(entry, newFileEntry(file)); // rewritten: start over
+    const forkedAt = store.forks[path.basename(file, ".jsonl")];
+    if (forkedAt && entry.copiedBefore !== forkedAt) Object.assign(entry, newFileEntry(file), { copiedBefore: forkedAt });
     if (stat.size === entry.offset) return;
 
     const fd = fs.openSync(file, "r");
@@ -90,6 +92,8 @@ function createHistory(storeFile) {
     if (e.type !== "user" && e.type !== "assistant") return;
     const ts = Date.parse(e.timestamp);
     if (!Number.isFinite(ts)) return;
+    // A forked chat starts with a copy of its parent's messages; they were already counted there.
+    if (entry.copiedBefore && ts < entry.copiedBefore) return;
     // Chats run from temp/test folders are not projects.
     if (e.cwd && entry.folder === null && isIgnored(e.cwd + "/.")) entry.ignored = true;
     // The cwd is only a fallback main folder; "works in" lists the folders actually written.
@@ -184,12 +188,18 @@ function createHistory(storeFile) {
     save(storeFile, store);
   }
 
+  // A chat forked from another (the manager's first run): its messages before `at` are copies.
+  function markFork(chatId, at) {
+    store.forks[chatId] = at;
+    save(storeFile, store);
+  }
+
   // Transcript file of a chat (its id is the file name).
   function fileFor(chatId) {
     return Object.keys(store.files).find((file) => !store.files[file].isSubagent && path.basename(file, ".jsonl") === chatId) || null;
   }
 
-  return { scanAll, scanFile, projects, persist, fileFor, TRANSCRIPTS_DIR };
+  return { scanAll, scanFile, projects, persist, fileFor, markFork, TRANSCRIPTS_DIR };
 }
 
 function listTranscripts() {
@@ -259,11 +269,11 @@ function addTokens(into, from) {
 function load(file) {
   try {
     const data = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (data.version === STORE_VERSION) return data;
+    if (data.version === STORE_VERSION) return { forks: {}, ...data };
   } catch {
     // First run or unreadable store: rebuild from the transcripts.
   }
-  return { version: STORE_VERSION, files: {} };
+  return { version: STORE_VERSION, files: {}, forks: {} };
 }
 
 function save(file, store) {
