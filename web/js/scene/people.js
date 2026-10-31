@@ -81,15 +81,18 @@ export function createPeople(scene) {
     for (const s of [...state.sessions].sort((a, b) => a.startedAt - b.startedAt)) {
       const floor = floorOf(s.projectId);
       const place = s.status === "ended" ? "boat" : s.place;
-      const key = place === "beach" || place === "boat" ? place : `${floor}:${place}`;
-      const target = spotFor(place, floor, roof, nextSlot(key), deskOf(s));
+      // A chat's person stays at its own desk whatever tool it uses (the bubble shows the tool);
+      // only resting (roof) and leaving move it. Helpers walk to the shelf, rack and window.
+      const spot = place === "beach" || place === "boat" ? place : "site";
+      const key = spot === "site" ? `${floor}:site` : spot;
+      const target = spotFor(spot, floor, roof, nextSlot(key), deskOf(s));
       const e = upsert(s.id, looksFor(s.id), false, firstSync ? target : { ...ELEVATOR_SPOT, floor });
-      Object.assign(e, { session: s, helper: null, target, place, pose: poseFor(s.status, place, target) });
+      Object.assign(e, { session: s, helper: null, target, place, pose: poseFor(s.status, spot, target) });
       seen.add(s.id);
 
       for (const h of s.helpers || []) {
         const hk = `${s.id}:${h.id}`;
-        const hTarget = spotFor(h.place === "site" || h.place === "door" ? "library" : h.place, floor, roof, nextSlot(`${floor}:${h.place}`), 0);
+        const hTarget = spotFor(h.place === "site" || h.place === "door" ? "library" : h.place, floor, roof, nextSlot(floor ? `${floor}:${h.place}` : "0:site"), 0);
         const helper = upsert(hk, looksFor(h.id), true, firstSync ? hTarget : { ...ELEVATOR_SPOT, floor });
         Object.assign(helper, { session: s, helper: h, target: hTarget, place: h.place, pose: POSE_BY_PLACE[h.place] || "thinking" });
         seen.add(hk);

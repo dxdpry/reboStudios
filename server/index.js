@@ -7,6 +7,7 @@ const { createState, applyEvent, prune, toPublic } = require("./state");
 const { createHistory } = require("./history");
 const { projectForFile, projectForCwd } = require("./projects");
 const { createWorkspace } = require("./workspace");
+const { readChat, createControl } = require("./chat");
 
 const PORT = Number(process.env.AGENT_ISLAND_PORT) || 4848;
 const ROOT = path.join(__dirname, "..");
@@ -33,19 +34,26 @@ fs.mkdirSync(LOG_DIR, { recursive: true });
 const state = loadState();
 const history = createHistory(path.join(DATA_DIR, "history.json"));
 const workspace = createWorkspace(path.join(DATA_DIR, "workspace.json"));
+const control = createControl();
 const transcriptTimers = new Map();
+const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
+const CHAT_ID = /^[0-9a-f-]{8,64}$/i;
 const sseClients = new Set();
 let broadcastTimer = null;
 let saveTimer = null;
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, "http://localhost");
+  // Another site resolving its own name to 127.0.0.1 (DNS rebinding) arrives with a foreign Host.
+  if (!ALLOWED_HOSTS.has(req.headers.host)) return json(res, 403, { error: "forbidden" });
   if (req.method === "POST" && url.pathname === "/hook") return handleHook(req, res);
   if (req.method === "GET" && url.pathname === "/events") return handleSse(req, res);
   if (req.method === "GET" && url.pathname === "/state") return json(res, 200, publicState());
   if (req.method === "GET" && url.pathname === "/health") return json(res, 200, { ok: true });
   if (req.method === "GET" && url.pathname === "/api/chats") return json(res, 200, history.chats(String(url.searchParams.get("project") || "")));
   if (req.method === "POST" && url.pathname === "/api/workspace") return handleWorkspace(req, res);
+  if (req.method === "GET" && url.pathname === "/api/chat") return handleChatRead(url, req, res);
+  if (req.method === "POST" && url.pathname === "/api/chat") return handleChatAction(req, res);
   if (req.method === "GET") return serveStatic(url.pathname, res);
   json(res, 404, { error: "not found" });
 });
@@ -69,9 +77,14 @@ function readJson(req, res, onBody) {
   });
 }
 
+// Hooks run with --sync (PreToolUse, PostToolUse, Stop) wait for this answer: it carries the
+// messages and stop requests sent from the page, in Claude Code's hook output format.
 function handleHook(req, res) {
   readJson(req, res, (event) => {
-    json(res, 200, { ok: true });
+    const payload = event.payload || {};
+    const output = req.headers["x-rebo-sync"] === "1" && payload.session_id ? control.take(payload.session_id, payload.hook_event_name) : null;
+    json(res, 200, output || {});
+    if (output) changed();
     appendLog(event);
     if (applyEvent(state, event.payload, Date.now(), RESOLVE)) changed();
     scheduleTranscriptScan(event.payload);
@@ -86,6 +99,27 @@ function handleWorkspace(req, res) {
     const ok = workspace.apply(action);
     json(res, ok ? 200 : 400, { ok });
     if (ok) changed();
+  });
+}
+
+function handleChatRead(url, req, res) {
+  if (req.headers["x-rebo"] !== "1") return json(res, 403, { error: "forbidden" });
+  const id = String(url.searchParams.get("id") || "");
+  if (!CHAT_ID.test(id)) return json(res, 400, { error: "bad id" });
+  const session = state.sessions[id];
+  const file = (session && session.transcriptPath) || history.fileFor(id);
+  json(res, 200, { id, items: readChat(file), pending: control.pending(id) });
+}
+
+// Message, stop or cancel for one chat; delivered by that chat's next hook.
+function handleChatAction(req, res) {
+  if (req.headers["x-rebo"] !== "1") return json(res, 403, { error: "forbidden" });
+  readJson(req, res, (action) => {
+    const id = String(action.id || "");
+    if (!CHAT_ID.test(id)) return json(res, 400, { error: "bad id" });
+    const ok =
+      action.type === "message" ? control.queue(id, action.text) : action.type === "stop" ? control.requestStop(id) : action.type === "cancel" ? control.cancel(id) : false;
+    json(res, ok ? 200 : 400, { ok, pending: control.pending(id) });
   });
 }
 
@@ -165,6 +199,7 @@ function json(res, status, data) {
 }
 
 setInterval(() => {
+  control.prune(Date.now());
   if (prune(state, Date.now())) changed();
 }, PRUNE_INTERVAL_MS);
 

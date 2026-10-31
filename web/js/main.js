@@ -9,6 +9,7 @@ import { createOverlay } from "./ui/overlay.js";
 import { createPanels } from "./ui/panels.js";
 import { createProjectCard } from "./ui/projectCard.js";
 import { createDirectory } from "./ui/directory.js";
+import { createChatPanel } from "./ui/chatPanel.js";
 import { ICONS } from "./ui/icons.js";
 import { ago, hours as formatHours } from "./ui/format.js";
 import { createAlerts } from "./notify.js";
@@ -23,7 +24,11 @@ const BUILDING_MARGIN = 1.5;
 const stage = createStage(document.getElementById("stage"));
 const tower = createTower(stage.scene);
 const people = createPeople(stage.scene);
-const overlay = createOverlay(document.getElementById("overlay"), stage.camera, stage.renderer.domElement, (id) => select(id, false), (id) => openProject(id));
+const overlay = createOverlay(document.getElementById("overlay"), stage.camera, stage.renderer.domElement, (id) => select(id, false), (id) => openProject(id), (desk) => chatPanel.open(desk));
+const chatPanel = createChatPanel(document.getElementById("chat-panel"), {
+  sessionFor: (id) => state.sessions.find((s) => s.id === id) || null,
+  onClose: () => {},
+});
 const card = createProjectCard(document.getElementById("project-card"), () => closeProject());
 const directory = createDirectory(document.getElementById("directory"), {
   open: (id) => openProject(id),
@@ -161,10 +166,11 @@ function focusDesks() {
     const chat = (project.chats || [])[i];
     const session = chat && live.get(chat.id);
     if (!chat) {
-      desks.push({ title: "New chat", meta: "", status: "idle" });
+      desks.push({ id: null, title: "New chat", meta: "", status: "idle" });
       continue;
     }
     desks.push({
+      id: chat.id,
       title: chat.title,
       meta: session ? session.activity : `${formatHours(chat.activeMs)} · ${ago(Date.now() - chat.lastAt)} ago`,
       status: session ? (session.status === "needsYou" ? "needsYou" : "running") : "idle",
@@ -205,6 +211,7 @@ function openProject(id) {
 }
 
 function closeProject() {
+  chatPanel.close();
   const wasFocused = focusedProjectId;
   focusedProjectId = null;
   selectedProjectId = null;
@@ -262,7 +269,9 @@ stage.renderer.domElement.addEventListener("pointerup", (ev) => {
 });
 
 window.addEventListener("keydown", (ev) => {
-  if (ev.key === "Escape" && focusedProjectId) closeProject();
+  if (ev.key !== "Escape") return;
+  if (chatPanel.chatId) chatPanel.close();
+  else if (focusedProjectId) closeProject();
 });
 
 const clock = new THREE.Clock();
@@ -278,10 +287,11 @@ function frame() {
   const status = projectStatuses();
   tower.update(t, { night, statusByProject: status, busyDesks: busyDesks() });
   stage.render(dt);
-  overlay.update(people.list(), focusedProjectId ? [] : floors, selectedId, projectInfo(), selectedProjectId, focusDesks());
+  overlay.update(people.list(), focusedProjectId ? [] : floors, selectedId, projectInfo(), selectedProjectId, focusDesks(), chatPanel.chatId);
   if (t - lastPanelRender > 1) {
     lastPanelRender = t;
     renderPanels();
+    chatPanel.renderStatus();
   }
   requestAnimationFrame(frame);
 }

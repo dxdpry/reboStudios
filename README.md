@@ -16,10 +16,11 @@ Open http://127.0.0.1:4848 and click "Enable alerts" to get the bell and system 
 
 ## Layout
 
-- `hooks/emit.js` — the hook: forwards the event to the server (async, 1 s timeout, always exits 0).
+- `hooks/emit.js` — the hook: forwards the event to the server (1 s timeout, always exits 0). Async for most events; PreToolUse, PostToolUse and Stop run with `--sync` and print the server's answer, which delivers messages and stop requests sent from the page.
+- `server/chat.js` — a chat's recent conversation (tail of its transcript) and the inbox of messages / stop requests waiting for that chat's next hook. A chat that is idle or closed only gets them when it runs again.
 - `server/state.js` — island state from hook events (pure, tested in `tests/`).
 - `server/activity.js` — tool → place on the island, short activity labels, project from `cwd`.
-- `server/index.js` — HTTP: `POST /hook`, `GET /events` (SSE), `GET /state`, static files.
+- `server/index.js` — HTTP: `POST /hook`, `GET /events` (SSE), `GET /state`, `GET|POST /api/chat`, static files. Only answers Host `127.0.0.1`/`localhost` (DNS rebinding) and `/api/*` needs the `X-Rebo: 1` header (no cross-site requests).
 - `web/js/scene/` — Three.js low-poly island: `stage.js` renderer/camera/lights, `layout.js` positions,
   `island.js` terrain and landmarks, `props.js` builders, `people.js` colonists, `materials.js` palette.
 - `web/js/ui/` — `panels.js` counters/alerts/session list, `overlay.js` bubbles pinned to 3D, `icons.js` SVG icons.

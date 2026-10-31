@@ -184,7 +184,12 @@ function createHistory(storeFile) {
     save(storeFile, store);
   }
 
-  return { scanAll, scanFile, projects, persist, TRANSCRIPTS_DIR };
+  // Transcript file of a chat (its id is the file name).
+  function fileFor(chatId) {
+    return Object.keys(store.files).find((file) => !store.files[file].isSubagent && path.basename(file, ".jsonl") === chatId) || null;
+  }
+
+  return { scanAll, scanFile, projects, persist, fileFor, TRANSCRIPTS_DIR };
 }
 
 function listTranscripts() {

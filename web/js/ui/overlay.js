@@ -1,14 +1,14 @@
 // HTML elements pinned to 3D positions: activity bubbles over people and a plaque beside each floor.
 // Text from hooks (commands, file names) is always set with textContent.
 import * as THREE from "three";
-import { iconForEntity } from "./icons.js";
+import { ICONS, iconForEntity } from "./icons.js";
 import { hours, compact, freshTokens, ago } from "./format.js";
 import { TOWER, DESKS, floorBaseY, floorTopY } from "../scene/towerLayout.js";
 
 const HEAD_OFFSET = 1.45; // above the head, in person units (scaled with the model)
 const STATUS_TEXT = { running: "Running", needsYou: "Needs you", idle: "Idle" };
 
-export function createOverlay(layer, camera, canvas, onSelect, onSelectProject) {
+export function createOverlay(layer, camera, canvas, onSelect, onSelectProject, onOpenChat) {
   const bubbles = new Map();
   const plaques = new Map();
   const deskTags = [];
@@ -48,8 +48,8 @@ export function createOverlay(layer, camera, canvas, onSelect, onSelectProject) 
   }
 
   // floors: [{ project, index }]; info: Map projectId -> { status, activity };
-  // focus: { index, desks: [{ title, meta, status }] } in floor mode, else null.
-  function update(entities, floors, selectedId, info, selectedProjectId, focus) {
+  // focus: { index, desks: [{ id, title, meta, status }] } in floor mode, else null.
+  function update(entities, floors, selectedId, info, selectedProjectId, focus, openChatId) {
     const seen = new Set();
     for (const e of entities) {
       const b = bubbleFor(e.key);
@@ -116,23 +116,30 @@ export function createOverlay(layer, camera, canvas, onSelect, onSelectProject) 
       plaque.el.remove();
       plaques.delete(id);
     }
-    updateDeskTags(focus);
+    updateDeskTags(focus, openChatId);
   }
 
-  // Floor mode: a name tag on every desk with its chat's title and state.
-  function updateDeskTags(focus) {
+  // Floor mode: a name tag on every desk with its chat's title and state; the (i) opens the chat.
+  function updateDeskTags(focus, openChatId) {
     const desks = focus ? focus.desks : [];
     while (deskTags.length < desks.length) {
-      const el = document.createElement("div");
+      const el = document.createElement("button");
+      el.type = "button";
       el.className = "desk-tag";
-      el.innerHTML = '<span class="tag-line"><span class="tag-dot"></span><span class="tag-name"></span></span><span class="tag-stats"></span>';
+      el.innerHTML = `<span class="desk-info" aria-hidden="true">${ICONS.info}</span><span class="desk-text"><span class="tag-line"><span class="tag-dot"></span><span class="tag-name"></span></span><span class="tag-stats"></span></span>`;
+      const tag = { el, name: el.querySelector(".tag-name"), meta: el.querySelector(".tag-stats"), desk: null };
+      el.addEventListener("click", () => tag.desk && tag.desk.id && onOpenChat(tag.desk));
       layer.appendChild(el);
-      deskTags.push({ el, name: el.querySelector(".tag-name"), meta: el.querySelector(".tag-stats") });
+      deskTags.push(tag);
     }
     deskTags.forEach((tag, i) => {
       const desk = desks[i];
+      tag.desk = desk || null;
       tag.el.hidden = !desk;
       if (!desk) return;
+      tag.el.disabled = !desk.id;
+      tag.el.title = desk.id ? `Open "${desk.title}"` : "";
+      tag.el.classList.toggle("open", !!desk.id && desk.id === openChatId);
       tag.name.textContent = desk.title;
       tag.meta.textContent = desk.meta;
       tag.el.dataset.status = desk.status;

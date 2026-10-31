@@ -1,9 +1,12 @@
 // Claude Code hook: forwards the event JSON from stdin to the local Agent Island server.
-// Must never slow down or break a session: short timeout, swallow every error, always exit 0.
+// With --sync (PreToolUse, PostToolUse, Stop) it prints the server's answer, which carries the
+// messages and stop requests sent from the page. Must never slow down or break a session:
+// short timeout, swallow every error, always exit 0.
 const http = require("http");
 
 const PORT = Number(process.env.AGENT_ISLAND_PORT) || 4848;
 const TIMEOUT_MS = 1000;
+const SYNC = process.argv.includes("--sync");
 
 if (process.env.AGENT_ISLAND_OFF === "1") process.exit(0);
 
@@ -21,12 +24,17 @@ function send() {
       port: PORT,
       path: "/hook",
       method: "POST",
-      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body), ...(SYNC ? { "X-Rebo-Sync": "1" } : {}) },
       timeout: TIMEOUT_MS,
     },
     (res) => {
-      res.resume();
-      res.on("end", () => process.exit(0));
+      let answer = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => (answer += chunk));
+      res.on("end", () => {
+        if (SYNC && res.statusCode === 200 && answer.length > 2) process.stdout.write(answer);
+        process.exit(0);
+      });
     }
   );
   req.on("timeout", () => req.destroy());
